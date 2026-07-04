@@ -1,7 +1,11 @@
 .PHONY: build test bench run clean lint fmt vet
 
-# 构建单二进制
-build:
+# 构建 Web UI
+ui-build:
+	cd ui && npm run build
+
+# 构建单二进制 (包含 Web UI)
+build: ui-build
 	go build -o bin/andb ./cmd/andb
 
 # 运行服务端

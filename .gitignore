@@ -3,6 +3,10 @@ bin/
 andb
 *.exe
 
+# Web UI 构建产物
+ui/static/dist/
+ui/node_modules/
+
 # 数据目录
 data/
 *.vlog

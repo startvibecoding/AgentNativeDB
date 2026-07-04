@@ -3,15 +3,18 @@ package apihttp
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
 	"github.com/startvibecoding/AgentNativeDB/internal/model"
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
+	uistatic "github.com/startvibecoding/AgentNativeDB/ui/static"
 )
 
 // Router HTTP 路由器
@@ -76,6 +79,9 @@ func (r *Router) registerRoutes() {
 
 	// Health
 	r.mux.HandleFunc("GET /health", r.handleHealth)
+
+	// 静态文件服务 (Web UI)
+	r.mux.HandleFunc("/", r.handleStatic)
 }
 
 // ========== 响应工具 ==========
@@ -410,4 +416,30 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request) {
 	}
 
 	jsonOK(w, result)
+}
+
+// ========== Static File Handler (Web UI) ==========
+
+func (r *Router) handleStatic(w http.ResponseWriter, req *http.Request) {
+	// 获取嵌入的文件系统
+	sub, err := fs.Sub(uistatic.Files, "dist")
+	if err != nil {
+		http.Error(w, "UI not available", http.StatusInternalServerError)
+		return
+	}
+
+	// SPA 回退: 如果请求的文件不存在，返回 index.html
+	path := req.URL.Path
+	if path == "/" {
+		path = "/index.html"
+	}
+
+	// 检查文件是否存在
+	_, err = sub.Open(strings.TrimPrefix(path, "/"))
+	if err != nil {
+		// 文件不存在，回退到 index.html (SPA 路由)
+		req.URL.Path = "/"
+	}
+
+	http.FileServer(http.FS(sub)).ServeHTTP(w, req)
 }
