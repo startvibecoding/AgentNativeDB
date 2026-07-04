@@ -98,6 +98,16 @@ func (p *Planner) Plan(stmt Statement) (PlanNode, error) {
 		return p.planUpdate(s)
 	case *DeleteStmt:
 		return p.planDelete(s)
+	case *CreateTableStmt:
+		return p.planCreateTable(s)
+	case *DropTableStmt:
+		return p.planDropTable(s)
+	case *AlterTableStmt:
+		return p.planAlterTable(s)
+	case *ShowTablesStmt:
+		return p.planShowTables(s)
+	case *DescribeTableStmt:
+		return p.planDescribeTable(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -261,3 +271,65 @@ type JoinNode struct {
 
 func (n *JoinNode) planNode() {}
 func (n *JoinNode) String() string { return fmt.Sprintf("%s JOIN", n.Type) }
+
+// ========== DDL 计划节点 ==========
+
+// CreateTablePlan CREATE TABLE 计划
+type CreateTablePlan struct {
+	Stmt *CreateTableStmt
+}
+
+func (n *CreateTablePlan) planNode() {}
+func (n *CreateTablePlan) String() string { return "CreateTable" }
+
+// DropTablePlan DROP TABLE 计划
+type DropTablePlan struct {
+	Stmt *DropTableStmt
+}
+
+func (n *DropTablePlan) planNode() {}
+func (n *DropTablePlan) String() string { return "DropTable" }
+
+// AlterTablePlan ALTER TABLE 计划
+type AlterTablePlan struct {
+	Stmt *AlterTableStmt
+}
+
+func (n *AlterTablePlan) planNode() {}
+func (n *AlterTablePlan) String() string { return "AlterTable" }
+
+// ShowTablesPlan SHOW TABLES 计划
+type ShowTablesPlan struct{}
+
+func (n *ShowTablesPlan) planNode() {}
+func (n *ShowTablesPlan) String() string { return "ShowTables" }
+
+// DescribeTablePlan DESCRIBE TABLE 计划
+type DescribeTablePlan struct {
+	Stmt *DescribeTableStmt
+}
+
+func (n *DescribeTablePlan) planNode() {}
+func (n *DescribeTablePlan) String() string { return "DescribeTable" }
+
+// ========== DDL 计划生成 ==========
+
+func (p *Planner) planCreateTable(s *CreateTableStmt) (PlanNode, error) {
+	return &CreateTablePlan{Stmt: s}, nil
+}
+
+func (p *Planner) planDropTable(s *DropTableStmt) (PlanNode, error) {
+	return &DropTablePlan{Stmt: s}, nil
+}
+
+func (p *Planner) planAlterTable(s *AlterTableStmt) (PlanNode, error) {
+	return &AlterTablePlan{Stmt: s}, nil
+}
+
+func (p *Planner) planShowTables(s *ShowTablesStmt) (PlanNode, error) {
+	return &ShowTablesPlan{}, nil
+}
+
+func (p *Planner) planDescribeTable(s *DescribeTableStmt) (PlanNode, error) {
+	return &DescribeTablePlan{Stmt: s}, nil
+}

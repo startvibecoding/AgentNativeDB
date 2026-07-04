@@ -64,6 +64,26 @@ const (
 	TOKEN_FIRST
 	TOKEN_LAST
 
+	// DDL 关键字
+	TOKEN_ALTER      // ALTER
+	TOKEN_SHOW       // SHOW
+	TOKEN_DESCRIBE   // DESCRIBE
+	TOKEN_ADD        // ADD
+	TOKEN_COLUMN      // COLUMN
+	TOKEN_MODIFY     // MODIFY
+	TOKEN_PRIMARY    // PRIMARY
+	TOKEN_KEY        // KEY
+	TOKEN_IF         // IF
+	TOKEN_TABLES     // TABLES
+	TOKEN_INT        // INT
+	TOKEN_INTEGER_TYPE // INTEGER
+	TOKEN_VARCHAR    // VARCHAR
+	TOKEN_TEXT       // TEXT
+	TOKEN_FLOAT_TYPE // FLOAT
+	TOKEN_BOOL       // BOOL
+	TOKEN_BOOLEAN    // BOOLEAN
+	TOKEN_DEFAULT    // DEFAULT
+
 	// 运算符
 	TOKEN_EQ        // =
 	TOKEN_NEQ       // != 或 <>
@@ -136,6 +156,26 @@ var keywords = map[string]TokenType{
 	"AVG":     TOKEN_AVG,
 	"FIRST":   TOKEN_FIRST,
 	"LAST":    TOKEN_LAST,
+
+	// DDL 关键字
+	"ALTER":     TOKEN_ALTER,
+	"SHOW":      TOKEN_SHOW,
+	"DESCRIBE":  TOKEN_DESCRIBE,
+	"ADD":       TOKEN_ADD,
+	"COLUMN":    TOKEN_COLUMN,
+	"MODIFY":    TOKEN_MODIFY,
+	"PRIMARY":   TOKEN_PRIMARY,
+	"KEY":       TOKEN_KEY,
+	"IF":        TOKEN_IF,
+	"TABLES":    TOKEN_TABLES,
+	"INT":       TOKEN_INT,
+	"INTEGER":   TOKEN_INTEGER_TYPE,
+	"VARCHAR":   TOKEN_VARCHAR,
+	"TEXT":      TOKEN_TEXT,
+	"FLOAT":     TOKEN_FLOAT_TYPE,
+	"BOOL":      TOKEN_BOOL,
+	"BOOLEAN":   TOKEN_BOOLEAN,
+	"DEFAULT":   TOKEN_DEFAULT,
 }
 
 func (t TokenType) String() string {
@@ -155,6 +195,12 @@ func (t TokenType) String() string {
 			"ON", "TRUE", "FALSE", "LIKE", "BETWEEN", "EXISTS",
 			"COUNT", "SUM", "MIN", "MAX", "AVG", "FIRST", "LAST",
 		}[t-TOKEN_SELECT]
+	case t <= TOKEN_DEFAULT:
+		return []string{
+			"ALTER", "SHOW", "DESCRIBE", "ADD", "COLUMN", "MODIFY",
+			"PRIMARY", "KEY", "IF", "TABLES", "INT", "INTEGER",
+			"VARCHAR", "TEXT", "FLOAT", "BOOL", "BOOLEAN", "DEFAULT",
+		}[t-TOKEN_ALTER]
 	case t <= TOKEN_DOT:
 		return []string{
 			"=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/",

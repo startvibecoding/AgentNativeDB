@@ -28,12 +28,21 @@ type Result struct {
 
 // Executor 查询执行器
 type Executor struct {
-	engine storage.Engine
+	engine   storage.Engine
+	tables   *storage.TableManager
 }
 
 // NewExecutor 创建执行器
 func NewExecutor(engine storage.Engine) *Executor {
-	return &Executor{engine: engine}
+	return &Executor{
+		engine: engine,
+		tables: storage.NewTableManager(engine),
+	}
+}
+
+// Init 初始化执行器
+func (e *Executor) Init(ctx context.Context) error {
+	return e.tables.Init(ctx)
 }
 
 // Execute 执行查询计划
@@ -59,6 +68,16 @@ func (e *Executor) Execute(ctx context.Context, plan PlanNode) (*Result, error) 
 		return e.executeDelete(ctx, n)
 	case *JoinNode:
 		return e.executeJoin(ctx, n)
+	case *CreateTablePlan:
+		return e.executeCreateTable(ctx, n)
+	case *DropTablePlan:
+		return e.executeDropTable(ctx, n)
+	case *AlterTablePlan:
+		return e.executeAlterTable(ctx, n)
+	case *ShowTablesPlan:
+		return e.executeShowTables(ctx, n)
+	case *DescribeTablePlan:
+		return e.executeDescribeTable(ctx, n)
 	default:
 		return nil, fmt.Errorf("unsupported plan node: %T", plan)
 	}
@@ -68,7 +87,7 @@ func (e *Executor) Execute(ctx context.Context, plan PlanNode) (*Result, error) 
 
 func (e *Executor) executeScan(ctx context.Context, node *ScanNode) (*Result, error) {
 	// 根据表名确定前缀
-	prefix := tablePrefix(node.Table)
+	prefix := e.tablePrefix(node.Table)
 	if prefix == 0 {
 		return nil, fmt.Errorf("unknown table: %s", node.Table)
 	}
@@ -451,7 +470,7 @@ func (e *Executor) computeAggregates(cols []SelectColumn, rows []Row) *Result {
 
 func (e *Executor) executeInsert(ctx context.Context, node *InsertPlan) (*Result, error) {
 	table := node.Stmt.Table
-	prefix := tablePrefix(table)
+	prefix := e.tablePrefix(table)
 	if prefix == 0 {
 		return nil, fmt.Errorf("unknown table: %s", table)
 	}
@@ -497,7 +516,7 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 	}
 
 	table := node.Stmt.Table
-	prefix := tablePrefix(table)
+	prefix := e.tablePrefix(table)
 	if prefix == 0 {
 		return nil, fmt.Errorf("unknown table: %s", table)
 	}
@@ -540,7 +559,7 @@ func (e *Executor) executeDelete(ctx context.Context, node *DeletePlan) (*Result
 	}
 
 	table := node.Stmt.Table
-	prefix := tablePrefix(table)
+	prefix := e.tablePrefix(table)
 	if prefix == 0 {
 		return nil, fmt.Errorf("unknown table: %s", table)
 	}
@@ -565,7 +584,13 @@ func (e *Executor) executeDelete(ctx context.Context, node *DeletePlan) (*Result
 // ========== 辅助函数 ==========
 
 // tablePrefix 返回表名对应的存储前缀
-func tablePrefix(table string) byte {
+func (e *Executor) tablePrefix(table string) byte {
+	// 先从 TableManager 中查找
+	if prefix, exists := e.tables.GetTablePrefix(table); exists {
+		return prefix
+	}
+
+	// 兼容旧的硬编码表名
 	switch strings.ToLower(table) {
 	case "agent_sessions", "sessions":
 		return storage.PrefixSession
@@ -860,5 +885,128 @@ func toFloatSlice(v any) []float64 {
 		return fs
 	}
 	return nil
+}
+
+// ========== DDL 执行 ==========
+
+// executeCreateTable 执行 CREATE TABLE
+func (e *Executor) executeCreateTable(ctx context.Context, node *CreateTablePlan) (*Result, error) {
+	stmt := node.Stmt
+
+	// 转换列定义
+	columns := make([]storage.ColumnMeta, len(stmt.Columns))
+	for i, col := range stmt.Columns {
+		columns[i] = storage.ColumnMeta{
+			Name:       col.Name,
+			Type:       col.Type.Name,
+			Length:     col.Type.Length,
+			Nullable:   col.Nullable,
+			PrimaryKey: col.PrimaryKey,
+		}
+		if col.Default != nil {
+			columns[i].Default = evalLiteral(col.Default)
+		}
+	}
+
+	if err := e.tables.CreateTable(ctx, stmt.Table, columns, stmt.IfNotExists); err != nil {
+		return nil, err
+	}
+
+	return &Result{RowsAffected: 0}, nil
+}
+
+// executeDropTable 执行 DROP TABLE
+func (e *Executor) executeDropTable(ctx context.Context, node *DropTablePlan) (*Result, error) {
+	stmt := node.Stmt
+
+	if err := e.tables.DropTable(ctx, stmt.Table, stmt.IfExists); err != nil {
+		return nil, err
+	}
+
+	return &Result{RowsAffected: 0}, nil
+}
+
+// executeAlterTable 执行 ALTER TABLE
+func (e *Executor) executeAlterTable(ctx context.Context, node *AlterTablePlan) (*Result, error) {
+	stmt := node.Stmt
+
+	var action storage.AlterAction
+	switch a := stmt.Action.(type) {
+	case *AddColumnAction:
+		action = &storage.AddColumnAction{
+			Column: storage.ColumnMeta{
+				Name:       a.Column.Name,
+				Type:       a.Column.Type.Name,
+				Length:     a.Column.Type.Length,
+				Nullable:   a.Column.Nullable,
+				PrimaryKey: a.Column.PrimaryKey,
+			},
+		}
+	case *DropColumnAction:
+		action = &storage.DropColumnAction{Column: a.Column}
+	case *ModifyColumnAction:
+		action = &storage.ModifyColumnAction{
+			Column: storage.ColumnMeta{
+				Name:       a.Column.Name,
+				Type:       a.Column.Type.Name,
+				Length:     a.Column.Type.Length,
+				Nullable:   a.Column.Nullable,
+				PrimaryKey: a.Column.PrimaryKey,
+			},
+		}
+	default:
+		return nil, fmt.Errorf("unsupported alter action: %T", stmt.Action)
+	}
+
+	if err := e.tables.AlterTable(ctx, stmt.Table, action); err != nil {
+		return nil, err
+	}
+
+	return &Result{RowsAffected: 0}, nil
+}
+
+// executeShowTables 执行 SHOW TABLES
+func (e *Executor) executeShowTables(ctx context.Context, node *ShowTablesPlan) (*Result, error) {
+	tables := e.tables.ListTables()
+
+	var rows []Row
+	for _, name := range tables {
+		rows = append(rows, Row{Values: map[string]any{"table_name": name}})
+	}
+
+	return &Result{
+		Columns: []string{"table_name"},
+		Rows:    rows,
+	}, nil
+}
+
+// executeDescribeTable 执行 DESCRIBE TABLE
+func (e *Executor) executeDescribeTable(ctx context.Context, node *DescribeTablePlan) (*Result, error) {
+	stmt := node.Stmt
+
+	meta, exists := e.tables.GetTable(stmt.Table)
+	if !exists {
+		return nil, fmt.Errorf("table %s does not exist", stmt.Table)
+	}
+
+	var rows []Row
+	for _, col := range meta.Columns {
+		row := Row{Values: map[string]any{
+			"field":   col.Name,
+			"type":    col.Type,
+			"null":    col.Nullable,
+			"key":     col.PrimaryKey,
+			"default": col.Default,
+		}}
+		if col.Length > 0 {
+			row.Values["type"] = fmt.Sprintf("%s(%d)", col.Type, col.Length)
+		}
+		rows = append(rows, row)
+	}
+
+	return &Result{
+		Columns: []string{"field", "type", "null", "key", "default"},
+		Rows:    rows,
+	}, nil
 }
 

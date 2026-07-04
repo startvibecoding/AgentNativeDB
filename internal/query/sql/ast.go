@@ -87,6 +87,93 @@ type DeleteStmt struct {
 func (s *DeleteStmt) stmtNode() {}
 func (s *DeleteStmt) String() string { return "DELETE ..." }
 
+// CreateTableStmt CREATE TABLE 语句
+type CreateTableStmt struct {
+	IfNotExists bool
+	Table       string
+	Columns     []ColumnDef
+}
+
+func (s *CreateTableStmt) stmtNode() {}
+func (s *CreateTableStmt) String() string { return "CREATE TABLE ..." }
+
+// DropTableStmt DROP TABLE 语句
+type DropTableStmt struct {
+	IfExists bool
+	Table    string
+}
+
+func (s *DropTableStmt) stmtNode() {}
+func (s *DropTableStmt) String() string { return "DROP TABLE ..." }
+
+// AlterTableStmt ALTER TABLE 语句
+type AlterTableStmt struct {
+	Table  string
+	Action AlterAction
+}
+
+func (s *AlterTableStmt) stmtNode() {}
+func (s *AlterTableStmt) String() string { return "ALTER TABLE ..." }
+
+// AlterAction 变更操作类型
+type AlterAction interface {
+	alterActionNode()
+	String() string
+}
+
+// AddColumnAction ADD COLUMN 操作
+type AddColumnAction struct {
+	Column ColumnDef
+}
+
+func (a *AddColumnAction) alterActionNode() {}
+func (a *AddColumnAction) String() string { return "ADD COLUMN ..." }
+
+// DropColumnAction DROP COLUMN 操作
+type DropColumnAction struct {
+	Column string
+}
+
+func (a *DropColumnAction) alterActionNode() {}
+func (a *DropColumnAction) String() string { return "DROP COLUMN ..." }
+
+// ModifyColumnAction MODIFY COLUMN 操作
+type ModifyColumnAction struct {
+	Column ColumnDef
+}
+
+func (a *ModifyColumnAction) alterActionNode() {}
+func (a *ModifyColumnAction) String() string { return "MODIFY COLUMN ..." }
+
+// ShowTablesStmt SHOW TABLES 语句
+type ShowTablesStmt struct{}
+
+func (s *ShowTablesStmt) stmtNode() {}
+func (s *ShowTablesStmt) String() string { return "SHOW TABLES" }
+
+// DescribeTableStmt DESCRIBE/DESC 语句
+type DescribeTableStmt struct {
+	Table string
+}
+
+func (s *DescribeTableStmt) stmtNode() {}
+func (s *DescribeTableStmt) String() string { return "DESCRIBE ..." }
+
+// ColumnDef 列定义
+type ColumnDef struct {
+	Name       string
+	Type       ColumnType
+	Nullable   bool
+	Default    Expression
+	PrimaryKey bool
+}
+
+// ColumnType 列类型
+type ColumnType struct {
+	Name   string // INT, VARCHAR, TEXT, FLOAT, BOOL, etc.
+	Length int    // VARCHAR 长度，0 表示不限
+}
+
 // ========== SELECT 子句 ==========
 
 // SelectColumn SELECT 列

@@ -45,8 +45,22 @@ func (p *Parser) parseStatement() (Statement, error) {
 		return p.parseUpdate()
 	case TOKEN_DELETE:
 		return p.parseDelete()
+	case TOKEN_CREATE:
+		return p.parseCreateTable()
+	case TOKEN_DROP:
+		return p.parseDropTable()
+	case TOKEN_ALTER:
+		return p.parseAlterTable()
+	case TOKEN_SHOW:
+		return p.parseShowTables()
+	case TOKEN_DESCRIBE:
+		return p.parseDescribeTable()
 	default:
-		return nil, fmt.Errorf("unexpected token %s at position %d, expected SELECT/INSERT/UPDATE/DELETE", tok.Type, tok.Pos)
+		// 检查 DESC 作为 DESCRIBE 的别名
+		if tok.Type == TOKEN_DESC {
+			return p.parseDescribeTable()
+		}
+		return nil, fmt.Errorf("unexpected token %s at position %d, expected SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/SHOW/DESCRIBE", tok.Type, tok.Pos)
 	}
 }
 
@@ -391,6 +405,265 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	}
 
 	return stmt, nil
+}
+
+// ========== CREATE TABLE ==========
+
+func (p *Parser) parseCreateTable() (*CreateTableStmt, error) {
+	stmt := &CreateTableStmt{}
+
+	p.expect(TOKEN_CREATE)
+	p.expect(TOKEN_TABLE)
+
+	// IF NOT EXISTS?
+	if p.peek().Type == TOKEN_IF {
+		p.advance()
+		p.expect(TOKEN_NOT)
+		p.expect(TOKEN_EXISTS)
+		stmt.IfNotExists = true
+	}
+
+	// 表名
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Table = name
+
+	// 列定义列表
+	p.expect(TOKEN_LPAREN)
+
+	for {
+		col, err := p.parseColumnDef()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Columns = append(stmt.Columns, col)
+
+		if p.peek().Type != TOKEN_COMMA {
+			break
+		}
+		p.advance()
+	}
+
+	p.expect(TOKEN_RPAREN)
+
+	// 可选的分号
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseColumnDef() (ColumnDef, error) {
+	col := ColumnDef{Nullable: true}
+
+	// 列名
+	name, err := p.expectIdent()
+	if err != nil {
+		return col, err
+	}
+	col.Name = name
+
+	// 列类型
+	colType, err := p.parseColumnType()
+	if err != nil {
+		return col, err
+	}
+	col.Type = colType
+
+	// 列约束
+	for {
+		tok := p.peek()
+		switch tok.Type {
+		case TOKEN_NOT:
+			p.advance()
+			p.expect(TOKEN_NULL)
+			col.Nullable = false
+		case TOKEN_PRIMARY:
+			p.advance()
+			p.expect(TOKEN_KEY)
+			col.PrimaryKey = true
+			col.Nullable = false
+		case TOKEN_DEFAULT:
+			p.advance()
+			defaultVal, err := p.parseOrExpr()
+			if err != nil {
+				return col, err
+			}
+			col.Default = defaultVal
+		default:
+			return col, nil
+		}
+	}
+}
+
+func (p *Parser) parseColumnType() (ColumnType, error) {
+	tok := p.peek()
+	var colType ColumnType
+
+	switch tok.Type {
+	case TOKEN_INT, TOKEN_INTEGER_TYPE:
+		p.advance()
+		colType.Name = "INT"
+	case TOKEN_VARCHAR:
+		p.advance()
+		colType.Name = "VARCHAR"
+		// 可选的长度
+		if p.peek().Type == TOKEN_LPAREN {
+			p.advance()
+			len, err := p.parseIntLiteral()
+			if err != nil {
+				return colType, err
+			}
+			colType.Length = int(len)
+			p.expect(TOKEN_RPAREN)
+		}
+	case TOKEN_TEXT:
+		p.advance()
+		colType.Name = "TEXT"
+	case TOKEN_FLOAT_TYPE:
+		p.advance()
+		colType.Name = "FLOAT"
+	case TOKEN_BOOL, TOKEN_BOOLEAN:
+		p.advance()
+		colType.Name = "BOOL"
+	default:
+		return colType, fmt.Errorf("expected column type, got %s at position %d", tok.Type, tok.Pos)
+	}
+
+	return colType, nil
+}
+
+// ========== DROP TABLE ==========
+
+func (p *Parser) parseDropTable() (*DropTableStmt, error) {
+	stmt := &DropTableStmt{}
+
+	p.expect(TOKEN_DROP)
+	p.expect(TOKEN_TABLE)
+
+	// IF EXISTS?
+	if p.peek().Type == TOKEN_IF {
+		p.advance()
+		p.expect(TOKEN_EXISTS)
+		stmt.IfExists = true
+	}
+
+	// 表名
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Table = name
+
+	// 可选的分号
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+
+	return stmt, nil
+}
+
+// ========== ALTER TABLE ==========
+
+func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
+	stmt := &AlterTableStmt{}
+
+	p.expect(TOKEN_ALTER)
+	p.expect(TOKEN_TABLE)
+
+	// 表名
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Table = name
+
+	// 操作类型
+	tok := p.peek()
+	switch tok.Type {
+	case TOKEN_ADD:
+		p.advance()
+		if p.peek().Type == TOKEN_COLUMN {
+			p.advance()
+		}
+		col, err := p.parseColumnDef()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Action = &AddColumnAction{Column: col}
+	case TOKEN_DROP:
+		p.advance()
+		if p.peek().Type == TOKEN_COLUMN {
+			p.advance()
+		}
+		colName, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Action = &DropColumnAction{Column: colName}
+	case TOKEN_MODIFY:
+		p.advance()
+		if p.peek().Type == TOKEN_COLUMN {
+			p.advance()
+		}
+		col, err := p.parseColumnDef()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Action = &ModifyColumnAction{Column: col}
+	default:
+		return nil, fmt.Errorf("expected ADD/DROP/MODIFY after ALTER TABLE, got %s at position %d", tok.Type, tok.Pos)
+	}
+
+	// 可选的分号
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+
+	return stmt, nil
+}
+
+// ========== SHOW TABLES ==========
+
+func (p *Parser) parseShowTables() (*ShowTablesStmt, error) {
+	p.expect(TOKEN_SHOW)
+	p.expect(TOKEN_TABLES)
+
+	// 可选的分号
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+
+	return &ShowTablesStmt{}, nil
+}
+
+// ========== DESCRIBE TABLE ==========
+
+func (p *Parser) parseDescribeTable() (*DescribeTableStmt, error) {
+	tok := p.peek()
+	if tok.Type == TOKEN_DESCRIBE {
+		p.advance()
+	} else if tok.Type == TOKEN_DESC {
+		p.advance()
+	} else {
+		return nil, fmt.Errorf("expected DESCRIBE or DESC, got %s at position %d", tok.Type, tok.Pos)
+	}
+
+	// 表名
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+
+	// 可选的分号
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+
+	return &DescribeTableStmt{Table: name}, nil
 }
 
 // ========== 表达式解析（优先级递增） ==========
