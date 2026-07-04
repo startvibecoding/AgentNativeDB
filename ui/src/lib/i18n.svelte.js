@@ -73,6 +73,14 @@ const messages = {
     'tables.dropMessage': '确定要删除表',
     'tables.dropHint': '吗？此操作不可恢复。',
     'tables.selectHint': '选择左侧的表查看详情',
+    'tables.actions': '操作',
+    'tables.viewData': '查看数据',
+    'tables.editData': '编辑数据',
+    'tables.viewDataTitle': '查看数据',
+    'tables.editDataTitle': '编辑数据',
+    'tables.backToList': '返回列表',
+    'tables.operation': '操作',
+    'tables.edit': '编辑',
 
     // SQL
     'sql.editor': 'SQL 编辑器',
@@ -220,6 +228,14 @@ const messages = {
     'tables.dropMessage': 'Are you sure you want to delete table',
     'tables.dropHint': '? This cannot be undone.',
     'tables.selectHint': 'Select a table from the sidebar',
+    'tables.actions': 'Actions',
+    'tables.viewData': 'View Data',
+    'tables.editData': 'Edit Data',
+    'tables.viewDataTitle': 'View Data',
+    'tables.editDataTitle': 'Edit Data',
+    'tables.backToList': 'Back to List',
+    'tables.operation': 'Action',
+    'tables.edit': 'Edit',
 
     // SQL
     'sql.editor': 'SQL Editor',
