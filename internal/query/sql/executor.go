@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/startvibecoding/AgentNativeDB/internal/query/sql/index"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
 	"github.com/startvibecoding/AgentNativeDB/internal/util"
 )
@@ -28,21 +29,58 @@ type Result struct {
 
 // Executor 查询执行器
 type Executor struct {
-	engine   storage.Engine
-	tables   *storage.TableManager
+	engine  storage.Engine
+	tables  *storage.TableManager
+	indexes *index.Manager
+	planner *Planner
 }
 
 // NewExecutor 创建执行器
 func NewExecutor(engine storage.Engine) *Executor {
-	return &Executor{
-		engine: engine,
-		tables: storage.NewTableManager(engine),
+	e := &Executor{
+		engine:  engine,
+		tables:  storage.NewTableManager(engine),
+		indexes: index.NewManager(engine),
 	}
+	e.planner = NewPlannerWithCatalog(&executorCatalog{ex: e})
+	return e
+}
+
+// Planner 返回与本执行器共享索引目录的计划器
+func (e *Executor) Planner() *Planner {
+	return e.planner
+}
+
+// executorCatalog 适配 index.Manager 为 IndexCatalog
+type executorCatalog struct {
+	ex *Executor
+}
+
+func (c *executorCatalog) FindByColumn(table, column string) []IndexInfo {
+	metas := c.ex.indexes.FindByColumn(table, column)
+	out := make([]IndexInfo, 0, len(metas))
+	for _, m := range metas {
+		out = append(out, IndexInfo{
+			Name:   m.Name,
+			Table:  m.Table,
+			Column: m.Column,
+			Type:   string(m.Type),
+		})
+	}
+	return out
 }
 
 // Init 初始化执行器
 func (e *Executor) Init(ctx context.Context) error {
-	return e.tables.Init(ctx)
+	if err := e.tables.Init(ctx); err != nil {
+		return err
+	}
+	return e.indexes.Init(ctx)
+}
+
+// Indexes 暴露索引管理器（供测试/外部使用）
+func (e *Executor) Indexes() *index.Manager {
+	return e.indexes
 }
 
 // Execute 执行查询计划
@@ -50,6 +88,8 @@ func (e *Executor) Execute(ctx context.Context, plan PlanNode) (*Result, error) 
 	switch n := plan.(type) {
 	case *ScanNode:
 		return e.executeScan(ctx, n)
+	case *IndexScanNode:
+		return e.executeIndexScan(ctx, n)
 	case *FilterNode:
 		return e.executeFilter(ctx, n)
 	case *ProjectNode:
@@ -78,6 +118,12 @@ func (e *Executor) Execute(ctx context.Context, plan PlanNode) (*Result, error) 
 		return e.executeShowTables(ctx, n)
 	case *DescribeTablePlan:
 		return e.executeDescribeTable(ctx, n)
+	case *CreateIndexPlan:
+		return e.executeCreateIndex(ctx, n)
+	case *DropIndexPlan:
+		return e.executeDropIndex(ctx, n)
+	case *ShowIndexesPlan:
+		return e.executeShowIndexes(ctx, n)
 	default:
 		return nil, fmt.Errorf("unsupported plan node: %T", plan)
 	}
@@ -496,8 +542,16 @@ func (e *Executor) executeInsert(ctx context.Context, node *InsertPlan) (*Result
 			return nil, fmt.Errorf("marshal row: %w", err)
 		}
 
+		indexOps, err := e.indexes.InsertRowOps(ctx, table, row, id)
+		if err != nil {
+			return nil, fmt.Errorf("index insert: %w", err)
+		}
+
 		key := storage.EncodeKey(prefix, id)
-		if err := e.engine.Set(ctx, key, data); err != nil {
+		ops := make([]storage.WriteOp, 0, 1+len(indexOps))
+		ops = append(ops, storage.WriteOp{Type: storage.OpPut, Key: key, Value: data})
+		ops = append(ops, indexOps...)
+		if err := e.engine.BatchWrite(ctx, ops); err != nil {
 			return nil, fmt.Errorf("insert: %w", err)
 		}
 		affected++
@@ -523,6 +577,12 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 
 	var affected int64
 	for _, row := range scanResult.Rows {
+		// 保存旧行用于索引更新
+		oldRow := make(map[string]any, len(row.Values))
+		for k, v := range row.Values {
+			oldRow[k] = v
+		}
+
 		// 应用 SET 子句
 		for _, set := range node.Stmt.Set {
 			val := evalExpr(set.Value, row.Values)
@@ -540,9 +600,17 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 			continue
 		}
 
+		indexOps, err := e.indexes.UpdateRowOps(ctx, table, oldRow, row.Values, id)
+		if err != nil {
+			return nil, fmt.Errorf("index update: %w", err)
+		}
+
 		key := storage.EncodeKey(prefix, id)
-		if err := e.engine.Set(ctx, key, data); err != nil {
-			continue
+		ops := make([]storage.WriteOp, 0, 1+len(indexOps))
+		ops = append(ops, storage.WriteOp{Type: storage.OpPut, Key: key, Value: data})
+		ops = append(ops, indexOps...)
+		if err := e.engine.BatchWrite(ctx, ops); err != nil {
+			return nil, fmt.Errorf("update: %w", err)
 		}
 		affected++
 	}
@@ -571,9 +639,13 @@ func (e *Executor) executeDelete(ctx context.Context, node *DeletePlan) (*Result
 			continue
 		}
 
+		indexOps := e.indexes.DeleteRowOps(table, row.Values, id)
 		key := storage.EncodeKey(prefix, id)
-		if err := e.engine.Delete(ctx, key); err != nil {
-			continue
+		ops := make([]storage.WriteOp, 0, 1+len(indexOps))
+		ops = append(ops, storage.WriteOp{Type: storage.OpDelete, Key: key})
+		ops = append(ops, indexOps...)
+		if err := e.engine.BatchWrite(ctx, ops); err != nil {
+			return nil, fmt.Errorf("delete: %w", err)
 		}
 		affected++
 	}
@@ -697,7 +769,11 @@ func evalBinaryOp(op TokenType, left, right any) any {
 		}
 		return toFloat(left) / r
 	case TOKEN_MODULO:
-		return float64(int64(toFloat(left)) % int64(toFloat(right)))
+		ri := int64(toFloat(right))
+		if ri == 0 {
+			return nil
+		}
+		return float64(int64(toFloat(left)) % ri)
 	case TOKEN_VECTOR_DIST:
 		return vectorDistance(left, right)
 	}
@@ -776,26 +852,75 @@ func compareValues(a, b any) int {
 		return 1
 	}
 
-	// 字符串比较
-	if sa, ok := a.(string); ok {
-		sb, sOk := b.(string)
-		if sOk {
-			return strings.Compare(sa, sb)
+	// bool 相同类型直接比较
+	if ba, ok := a.(bool); ok {
+		if bb, ok := b.(bool); ok {
+			switch {
+			case ba == bb:
+				return 0
+			case !ba:
+				return -1
+			default:
+				return 1
+			}
 		}
-		// string vs non-string: string 总是大于非 string
-		return 1
-	}
-	if _, ok := b.(string); ok {
-		return -1
 	}
 
-	// 数值比较
-	fa := toFloat(a)
-	fb := toFloat(b)
-	if fa < fb {
+	// 数值 vs 数值
+	if isNumeric(a) && isNumeric(b) {
+		fa := toFloat(a)
+		fb := toFloat(b)
+		if fa < fb {
+			return -1
+		}
+		if fa > fb {
+			return 1
+		}
+		return 0
+	}
+
+	// 数值 与 数字字符串混合：尝试统一成浮点
+	if isNumeric(a) {
+		if s, ok := b.(string); ok {
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				return compareFloat(toFloat(a), f)
+			}
+		}
+		return -1 // 数值 小于 非可转换字符串
+	}
+	if isNumeric(b) {
+		if s, ok := a.(string); ok {
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				return compareFloat(f, toFloat(b))
+			}
+		}
+		return 1
+	}
+
+	// 字符串 vs 字符串
+	if sa, ok := a.(string); ok {
+		if sb, ok := b.(string); ok {
+			return strings.Compare(sa, sb)
+		}
+	}
+
+	// fallback: 按字符串化后比较
+	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+}
+
+func isNumeric(v any) bool {
+	switch v.(type) {
+	case int, int32, int64, float32, float64:
+		return true
+	}
+	return false
+}
+
+func compareFloat(a, b float64) int {
+	if a < b {
 		return -1
 	}
-	if fa > fb {
+	if a > b {
 		return 1
 	}
 	return 0
@@ -1010,3 +1135,200 @@ func (e *Executor) executeDescribeTable(ctx context.Context, node *DescribeTable
 	}, nil
 }
 
+// ========== IndexScan 与 索引 DDL ==========
+
+// executeIndexScan 使用二级索引获取候选 rowID，再回主键读取行数据
+func (e *Executor) executeIndexScan(ctx context.Context, node *IndexScanNode) (*Result, error) {
+	// 选索引
+	var meta *index.Meta
+	if node.IndexName != "" {
+		meta, _ = e.indexes.Get(node.IndexName)
+	}
+	if meta == nil && node.Column != "" {
+		metas := e.indexes.FindByColumn(node.Table, node.Column)
+		if len(metas) > 0 {
+			for _, m := range metas {
+				switch node.Op {
+				case IndexOpMatch:
+					if m.Type == index.TypeInverted {
+						meta = m
+					}
+				case IndexOpRange:
+					if m.Type == index.TypeBTree {
+						meta = m
+					}
+				case IndexOpEqual:
+					if m.Type == index.TypeHash {
+						meta = m
+					}
+				}
+				if meta != nil {
+					break
+				}
+			}
+			if meta == nil {
+				meta = metas[0]
+			}
+		}
+	}
+	if meta == nil {
+		return e.executeScan(ctx, &ScanNode{Table: node.Table, Alias: node.Alias, Filter: node.Filter})
+	}
+
+	var rowIDs []string
+	var err error
+	switch node.Op {
+	case IndexOpEqual:
+		rowIDs, err = e.indexes.LookupEqual(ctx, meta, node.Equal)
+	case IndexOpRange:
+		rowIDs, err = e.indexes.LookupRange(ctx, meta, node.Low, node.High, node.IncludeLow, node.IncludeHigh)
+	case IndexOpMatch:
+		rowIDs, err = e.indexes.Match(ctx, meta, node.MatchQuery)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := e.tablePrefix(node.Table)
+	if prefix == 0 {
+		return nil, fmt.Errorf("unknown table: %s", node.Table)
+	}
+
+	seen := make(map[string]struct{}, len(rowIDs))
+	var rows []Row
+	for _, id := range rowIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+
+		key := storage.EncodeKey(prefix, id)
+		val, err := e.engine.Get(ctx, key)
+		if err != nil {
+			continue
+		}
+		var values map[string]any
+		if err := json.Unmarshal(val, &values); err != nil {
+			continue
+		}
+
+		if node.Alias != "" {
+			aliased := make(map[string]any, len(values))
+			for k, v := range values {
+				aliased[node.Alias+"."+k] = v
+				aliased[k] = v
+			}
+			values = aliased
+		}
+		rows = append(rows, Row{Values: values})
+	}
+
+	if node.Filter != nil {
+		rows = e.filterRows(rows, node.Filter)
+	}
+
+	columns := e.guessColumns(rows)
+	return &Result{Columns: columns, Rows: rows}, nil
+}
+func (e *Executor) executeCreateIndex(ctx context.Context, node *CreateIndexPlan) (*Result, error) {
+	stmt := node.Stmt
+
+	// 校验表存在
+	if _, ok := e.tables.GetTable(stmt.Table); !ok && e.tablePrefix(stmt.Table) == 0 {
+		return nil, fmt.Errorf("table %s does not exist", stmt.Table)
+	}
+
+	meta := index.Meta{
+		Name:   stmt.Name,
+		Table:  stmt.Table,
+		Column: stmt.Column,
+		Type:   index.Type(strings.ToUpper(stmt.IndexType)),
+		Unique: stmt.Unique,
+	}
+	if meta.Unique && meta.Type == index.TypeInverted {
+		return nil, fmt.Errorf("unique inverted index is not supported")
+	}
+	if err := e.indexes.Create(ctx, meta, stmt.IfNotExists); err != nil {
+		return nil, err
+	}
+
+	// 回填：全表扫描将已有行写入索引
+	prefix := e.tablePrefix(stmt.Table)
+	if prefix != 0 {
+		start, end := storage.PrefixRange([]byte{prefix})
+		iter, err := e.engine.Scan(ctx, start, end, storage.ScanOptions{})
+		if err == nil {
+			var rows []map[string]any
+			var ids []string
+			for iter.Next() {
+				k, v := iter.Item()
+				// 跳过二级索引条目（key 中含 0x00 分隔符）
+				if len(k) > 1 && bytesContainsZero(k[1:]) {
+					continue
+				}
+				var row map[string]any
+				if err := json.Unmarshal(v, &row); err != nil {
+					continue
+				}
+				id, _ := row["id"].(string)
+				if id == "" {
+					continue
+				}
+				rows = append(rows, row)
+				ids = append(ids, id)
+			}
+			iter.Close()
+			metaPtr, _ := e.indexes.Get(stmt.Name)
+			if metaPtr != nil && len(rows) > 0 {
+				if err := e.indexes.RebuildFromRows(ctx, metaPtr, rows, ids); err != nil {
+					_ = e.indexes.Drop(ctx, stmt.Name, true)
+					return nil, fmt.Errorf("backfill index: %w", err)
+				}
+			}
+		}
+	}
+
+	return &Result{RowsAffected: 0}, nil
+}
+
+// executeDropIndex 执行 DROP INDEX
+func (e *Executor) executeDropIndex(ctx context.Context, node *DropIndexPlan) (*Result, error) {
+	if err := e.indexes.Drop(ctx, node.Stmt.Name, node.Stmt.IfExists); err != nil {
+		return nil, err
+	}
+	return &Result{RowsAffected: 0}, nil
+}
+
+// executeShowIndexes 执行 SHOW INDEXES
+func (e *Executor) executeShowIndexes(ctx context.Context, node *ShowIndexesPlan) (*Result, error) {
+	var metas []*index.Meta
+	if node.Stmt.Table != "" {
+		metas = e.indexes.ListByTable(node.Stmt.Table)
+	} else {
+		metas = e.indexes.ListAll()
+	}
+	rows := make([]Row, 0, len(metas))
+	for _, m := range metas {
+		rows = append(rows, Row{Values: map[string]any{
+			"name":   m.Name,
+			"table":  m.Table,
+			"column": m.Column,
+			"type":   string(m.Type),
+			"unique": m.Unique,
+		}})
+	}
+	return &Result{
+		Columns: []string{"name", "table", "column", "type", "unique"},
+		Rows:    rows,
+	}, nil
+}
+
+// bytesContainsZero 检查是否含 0x00 分隔符（用于区分主键 vs 索引项）
+func bytesContainsZero(b []byte) bool {
+	for _, c := range b {
+		if c == 0x00 {
+			return true
+		}
+	}
+	return false
+}

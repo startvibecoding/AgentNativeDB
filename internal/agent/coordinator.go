@@ -248,10 +248,8 @@ func (c *Coordinator) ShareMemory(ctx context.Context, roomID, fromID, content s
 
 // ListRooms 列出所有房间
 func (c *Coordinator) ListRooms(ctx context.Context) ([]*Room, error) {
-	prefix := storage.EncodeIndexKey(storage.PrefixSystem, "room:", "")
-	start, end := storage.PrefixRange(prefix)
-
-	iter, err := c.engine.Scan(ctx, start, end, storage.ScanOptions{})
+	prefix := storage.EncodeKey(storage.PrefixSystem, "room:")
+	iter, err := c.engine.PrefixScan(ctx, prefix, storage.ScanOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +259,7 @@ func (c *Coordinator) ListRooms(ctx context.Context) ([]*Room, error) {
 	for iter.Next() {
 		_, val := iter.Item()
 		var room Room
-		if err := json.Unmarshal(val, &room); err == nil {
+		if err := json.Unmarshal(val, &room); err == nil && room.ID != "" {
 			rooms = append(rooms, &room)
 		}
 	}

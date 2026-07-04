@@ -64,7 +64,7 @@ func (e *BadgerEngine) Get(ctx context.Context, key []byte) ([]byte, error) {
 		return err
 	})
 	if err == badger.ErrKeyNotFound {
-		return nil, fmt.Errorf("key not found: %x", key)
+		return nil, storage.ErrKeyNotFound
 	}
 	return value, err
 }
@@ -87,14 +87,16 @@ func (e *BadgerEngine) Delete(ctx context.Context, key []byte) error {
 func (e *BadgerEngine) Scan(ctx context.Context, start, end []byte, opts storage.ScanOptions) (storage.Iterator, error) {
 	txn := e.db.NewTransaction(false)
 	iterOpts := badger.DefaultIteratorOptions
+	iterOpts.Reverse = opts.Reverse
 
 	it := txn.NewIterator(iterOpts)
 	return &badgerIterator{
-		it:    it,
-		txn:   txn,
-		start: start,
-		end:   end,
-		limit: opts.Limit,
+		it:      it,
+		txn:     txn,
+		start:   start,
+		end:     end,
+		limit:   opts.Limit,
+		reverse: opts.Reverse,
 	}, nil
 }
 
@@ -102,15 +104,17 @@ func (e *BadgerEngine) Scan(ctx context.Context, start, end []byte, opts storage
 func (e *BadgerEngine) PrefixScan(ctx context.Context, prefix []byte, opts storage.ScanOptions) (storage.Iterator, error) {
 	txn := e.db.NewTransaction(false)
 	iterOpts := badger.DefaultIteratorOptions
+	iterOpts.Reverse = opts.Reverse
 
 	it := txn.NewIterator(iterOpts)
 	start, end := storage.PrefixRange(prefix)
 	return &badgerIterator{
-		it:    it,
-		txn:   txn,
-		start: start,
-		end:   end,
-		limit: opts.Limit,
+		it:      it,
+		txn:     txn,
+		start:   start,
+		end:     end,
+		limit:   opts.Limit,
+		reverse: opts.Reverse,
 	}, nil
 }
 

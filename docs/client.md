@@ -5,12 +5,6 @@ HTTP客户端，用于连接AgentNativeDB服务器。
 ## 构建
 
 ```bash
-make client
-```
-
-或构建所有二进制：
-
-```bash
 make build
 ```
 
@@ -20,19 +14,16 @@ make build
 
 ```bash
 # 使用默认配置连接
-./bin/client
+./bin/andb client
 
 # 指定服务器地址
-./bin/client -server localhost:8400
+./bin/andb client -server localhost:8400
 
 # 使用配置文件
-./bin/client -config config.json
+./bin/andb client -config config.json
 
 # 指定输出格式
-./bin/client -format json
-
-# 详细输出模式
-./bin/client -verbose
+./bin/andb client -format json
 ```
 
 ### 命令行参数
@@ -175,15 +166,12 @@ andb-client> -format json sessions
 ### 项目结构
 
 ```
-cmd/
-├── cli/          # 本地SQL CLI
-├── client/       # HTTP客户端
-└── server/       # HTTP服务器
+cmd/andb/          统一入口（server/cli/client 子命令）
 ```
 
 ### 依赖
 
-- `github.com/chzyer/readline` - 命令行编辑库
+无额外依赖（readline 已内置于统一二进制）
 
 ### API端点
 

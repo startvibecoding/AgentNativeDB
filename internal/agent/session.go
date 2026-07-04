@@ -144,7 +144,11 @@ func (m *SessionManager) ListAll(ctx context.Context, limit int) ([]*model.Agent
 
 	var sessions []*model.AgentSession
 	for iter.Next() {
-		_, val := iter.Item()
+		key, val := iter.Item()
+		// 跳过二级索引项（含有 0x00 分隔符），只保留主键记录
+		if indexOfZero(key[1:]) >= 0 {
+			continue
+		}
 		var s model.AgentSession
 		if err := json.Unmarshal(val, &s); err != nil {
 			continue
@@ -153,6 +157,16 @@ func (m *SessionManager) ListAll(ctx context.Context, limit int) ([]*model.Agent
 	}
 
 	return sessions, nil
+}
+
+// indexOfZero 返回字节切片中首个 0x00 位置，-1 表示不存在
+func indexOfZero(b []byte) int {
+	for i, c := range b {
+		if c == 0x00 {
+			return i
+		}
+	}
+	return -1
 }
 
 // UpdateState 更新会话状态

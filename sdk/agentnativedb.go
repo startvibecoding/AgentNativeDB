@@ -48,6 +48,7 @@ type DB struct {
 	graphStore  *graph.GraphStore
 	lineage     *knowledge.LineageTracker
 	queryStats  *sql.QueryStats
+	executor    *sql.Executor
 	ctx         context.Context
 }
 
@@ -74,6 +75,12 @@ func Open(dataDir string) (*DB, error) {
 	lineage := knowledge.NewLineageTracker(engine)
 	queryStats := sql.NewQueryStats(1000, 100)
 
+	executor := sql.NewExecutor(engine)
+	if err := executor.Init(context.Background()); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("init executor: %w", err)
+	}
+
 	return &DB{
 		engine:      engine,
 		cache:       cache,
@@ -87,6 +94,7 @@ func Open(dataDir string) (*DB, error) {
 		graphStore:  graphStore,
 		lineage:     lineage,
 		queryStats:  queryStats,
+		executor:    executor,
 		ctx:         context.Background(),
 	}, nil
 }
@@ -263,13 +271,13 @@ func (db *DB) Query(query string) (*QueryResult, error) {
 		return nil, fmt.Errorf("parse error: %w", err)
 	}
 
-	planner := sql.NewPlanner()
+	planner := db.executor.Planner()
 	plan, err := planner.Plan(stmt)
 	if err != nil {
 		return nil, fmt.Errorf("plan error: %w", err)
 	}
 
-	executor := sql.NewExecutor(db.engine)
+	executor := db.executor
 	result, err := executor.Execute(db.ctx, plan)
 	if err != nil {
 		return nil, fmt.Errorf("execute error: %w", err)

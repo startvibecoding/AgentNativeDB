@@ -37,8 +37,8 @@ func NewUUID() string {
 	}
 	lastTimestamp = now
 
-	// 生成随机字节
-	var randBytes [10]byte
+	// 生成随机字节（需要 8 字节：uuid[8] 低 6 bit + uuid[9..15] 共 7 字节）
+	var randBytes [8]byte
 	_, err := rand.Read(randBytes[:])
 	if err != nil {
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
@@ -61,10 +61,10 @@ func NewUUID() string {
 	uuid[7] = byte(sequence & 0xFF)
 
 	// 变体 10 + 随机 6bit
-	uuid[8] = byte(0x80 | (randBytes[0]&0x3F))
+	uuid[8] = byte(0x80 | (randBytes[0] & 0x3F))
 
-	// 随机 56bit
-	copy(uuid[9:], randBytes[1:8])
+	// 随机 56bit（uuid[9..15]，共 7 字节）
+	copy(uuid[9:16], randBytes[1:8])
 
 	return formatUUID(uuid)
 }

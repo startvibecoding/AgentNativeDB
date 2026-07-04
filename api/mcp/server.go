@@ -21,17 +21,19 @@ type MCPServer struct {
 	session  *agent.SessionManager
 	memory   *agent.MemoryStore
 	decision *agent.DecisionRecorder
+	executor *sql.Executor
 	reader   io.Reader
 	writer   io.Writer
 }
 
 // NewMCPServer 创建 MCP 服务端
-func NewMCPServer(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder) *MCPServer {
+func NewMCPServer(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder, executor *sql.Executor) *MCPServer {
 	return &MCPServer{
 		engine:   engine,
 		session:  session,
 		memory:   memory,
 		decision: decision,
+		executor: executor,
 		reader:   os.Stdin,
 		writer:   os.Stdout,
 	}
@@ -251,14 +253,14 @@ func (s *MCPServer) handleQuerySQL(ctx context.Context, req *JSONRPCRequest, arg
 		return
 	}
 
-	planner := sql.NewPlanner()
+	planner := s.executor.Planner()
 	plan, err := planner.Plan(stmt)
 	if err != nil {
 		s.sendToolResult(req.ID, fmt.Sprintf("plan error: %v", err), true)
 		return
 	}
 
-	executor := sql.NewExecutor(s.engine)
+	executor := s.executor
 	result, err := executor.Execute(ctx, plan)
 	if err != nil {
 		s.sendToolResult(req.ID, fmt.Sprintf("execute error: %v", err), true)

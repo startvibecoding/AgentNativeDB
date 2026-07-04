@@ -28,6 +28,7 @@ const (
 	PrefixRelation byte = 0x05
 	PrefixLineage  byte = 0x06
 	PrefixVector   byte = 0x10
+	PrefixIndex    byte = 0x11 // 用户表索引（Hash / BTree / Inverted）
 	PrefixGraph    byte = 0x20
 	PrefixSystem   byte = 0xFF
 )

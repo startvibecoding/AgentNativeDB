@@ -46,13 +46,13 @@ func (p *Parser) parseStatement() (Statement, error) {
 	case TOKEN_DELETE:
 		return p.parseDelete()
 	case TOKEN_CREATE:
-		return p.parseCreateTable()
+		return p.parseCreate()
 	case TOKEN_DROP:
-		return p.parseDropTable()
+		return p.parseDrop()
 	case TOKEN_ALTER:
 		return p.parseAlterTable()
 	case TOKEN_SHOW:
-		return p.parseShowTables()
+		return p.parseShow()
 	case TOKEN_DESCRIBE:
 		return p.parseDescribeTable()
 	default:
@@ -640,6 +640,179 @@ func (p *Parser) parseShowTables() (*ShowTablesStmt, error) {
 	return &ShowTablesStmt{}, nil
 }
 
+// ========== 分派：CREATE / DROP / SHOW ==========
+
+func (p *Parser) parseCreate() (Statement, error) {
+	// 前看下一个 token 判断是 TABLE 还是 (UNIQUE) INDEX
+	save := p.pos
+	p.advance() // CREATE
+	tok := p.peek()
+	// 允许 CREATE UNIQUE INDEX ...
+	if tok.Type == TOKEN_UNIQUE {
+		p.pos = save
+		return p.parseCreateIndex()
+	}
+	if tok.Type == TOKEN_INDEX {
+		p.pos = save
+		return p.parseCreateIndex()
+	}
+	p.pos = save
+	return p.parseCreateTable()
+}
+
+func (p *Parser) parseDrop() (Statement, error) {
+	save := p.pos
+	p.advance() // DROP
+	tok := p.peek()
+	if tok.Type == TOKEN_INDEX {
+		p.pos = save
+		return p.parseDropIndex()
+	}
+	p.pos = save
+	return p.parseDropTable()
+}
+
+func (p *Parser) parseShow() (Statement, error) {
+	save := p.pos
+	p.advance() // SHOW
+	tok := p.peek()
+	if tok.Type == TOKEN_INDEXES || tok.Type == TOKEN_INDEX {
+		p.pos = save
+		return p.parseShowIndexes()
+	}
+	p.pos = save
+	return p.parseShowTables()
+}
+
+// ========== CREATE INDEX ==========
+
+func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
+	stmt := &CreateIndexStmt{IndexType: "BTREE"}
+
+	p.expect(TOKEN_CREATE)
+	if p.peek().Type == TOKEN_UNIQUE {
+		p.advance()
+		stmt.Unique = true
+	}
+	if err := p.expect(TOKEN_INDEX); err != nil {
+		return nil, err
+	}
+
+	// IF NOT EXISTS?
+	if p.peek().Type == TOKEN_IF {
+		p.advance()
+		if err := p.expect(TOKEN_NOT); err != nil {
+			return nil, err
+		}
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, err
+		}
+		stmt.IfNotExists = true
+	}
+
+	// 索引名
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// ON <table>
+	if err := p.expect(TOKEN_ON); err != nil {
+		return nil, err
+	}
+	table, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Table = table
+
+	// (<column>)
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, err
+	}
+	col, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Column = col
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	// [USING HASH|BTREE|INVERTED]
+	if p.peek().Type == TOKEN_USING {
+		p.advance()
+		typTok := p.peek()
+		switch typTok.Type {
+		case TOKEN_HASH:
+			stmt.IndexType = "HASH"
+		case TOKEN_BTREE:
+			stmt.IndexType = "BTREE"
+		case TOKEN_INVERTED:
+			stmt.IndexType = "INVERTED"
+		default:
+			return nil, fmt.Errorf("expected HASH/BTREE/INVERTED after USING, got %s at position %d", typTok.Type, typTok.Pos)
+		}
+		p.advance()
+	}
+
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+	return stmt, nil
+}
+
+// ========== DROP INDEX ==========
+
+func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
+	stmt := &DropIndexStmt{}
+	p.expect(TOKEN_DROP)
+	if err := p.expect(TOKEN_INDEX); err != nil {
+		return nil, err
+	}
+	if p.peek().Type == TOKEN_IF {
+		p.advance()
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, err
+		}
+		stmt.IfExists = true
+	}
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+	return stmt, nil
+}
+
+// ========== SHOW INDEXES ==========
+
+func (p *Parser) parseShowIndexes() (*ShowIndexesStmt, error) {
+	stmt := &ShowIndexesStmt{}
+	p.expect(TOKEN_SHOW)
+	tok := p.peek()
+	if tok.Type != TOKEN_INDEXES && tok.Type != TOKEN_INDEX {
+		return nil, fmt.Errorf("expected INDEXES, got %s at position %d", tok.Type, tok.Pos)
+	}
+	p.advance()
+	if p.peek().Type == TOKEN_FROM {
+		p.advance()
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Table = name
+	}
+	if p.peek().Type == TOKEN_SEMICOLON {
+		p.advance()
+	}
+	return stmt, nil
+}
+
 // ========== DESCRIBE TABLE ==========
 
 func (p *Parser) parseDescribeTable() (*DescribeTableStmt, error) {
@@ -889,6 +1062,8 @@ func (p *Parser) parsePrimary() (Expression, error) {
 	switch tok.Type {
 	case TOKEN_IDENT:
 		return p.parseIdentOrFunc()
+	case TOKEN_MATCH:
+		return p.parseMatchExpr()
 	case TOKEN_STRING:
 		p.advance()
 		return &StringLiteralExpr{Value: tok.Literal}, nil
@@ -1124,4 +1299,46 @@ func (p *Parser) advance() Token {
 	tok := p.peek()
 	p.pos++
 	return tok
+}
+
+// ========== MATCH ... AGAINST ==========
+
+// parseMatchExpr 解析 MATCH(col1[, col2 ...]) AGAINST ('query')
+func (p *Parser) parseMatchExpr() (Expression, error) {
+	if err := p.expect(TOKEN_MATCH); err != nil {
+		return nil, err
+	}
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, err
+	}
+	var cols []string
+	for {
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, name)
+		if p.peek().Type != TOKEN_COMMA {
+			break
+		}
+		p.advance()
+	}
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+	if err := p.expect(TOKEN_AGAINST); err != nil {
+		return nil, err
+	}
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, err
+	}
+	tok := p.peek()
+	if tok.Type != TOKEN_STRING {
+		return nil, fmt.Errorf("expected string literal after AGAINST(, got %s at position %d", tok.Type, tok.Pos)
+	}
+	p.advance()
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+	return &MatchExpr{Columns: cols, Query: tok.Literal}, nil
 }

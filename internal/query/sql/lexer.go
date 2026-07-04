@@ -3,7 +3,6 @@ package sql
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 // TokenType 词法单元类型
@@ -83,6 +82,16 @@ const (
 	TOKEN_BOOL       // BOOL
 	TOKEN_BOOLEAN    // BOOLEAN
 	TOKEN_DEFAULT    // DEFAULT
+
+	// 索引相关关键字
+	TOKEN_USING    // USING
+	TOKEN_HASH     // HASH
+	TOKEN_BTREE    // BTREE
+	TOKEN_INVERTED // INVERTED
+	TOKEN_INDEXES  // INDEXES
+	TOKEN_UNIQUE   // UNIQUE
+	TOKEN_MATCH    // MATCH
+	TOKEN_AGAINST  // AGAINST
 
 	// 运算符
 	TOKEN_EQ        // =
@@ -176,6 +185,15 @@ var keywords = map[string]TokenType{
 	"BOOL":      TOKEN_BOOL,
 	"BOOLEAN":   TOKEN_BOOLEAN,
 	"DEFAULT":   TOKEN_DEFAULT,
+
+	"USING":    TOKEN_USING,
+	"HASH":     TOKEN_HASH,
+	"BTREE":    TOKEN_BTREE,
+	"INVERTED": TOKEN_INVERTED,
+	"INDEXES":  TOKEN_INDEXES,
+	"UNIQUE":   TOKEN_UNIQUE,
+	"MATCH":    TOKEN_MATCH,
+	"AGAINST":  TOKEN_AGAINST,
 }
 
 func (t TokenType) String() string {
@@ -201,6 +219,11 @@ func (t TokenType) String() string {
 			"PRIMARY", "KEY", "IF", "TABLES", "INT", "INTEGER",
 			"VARCHAR", "TEXT", "FLOAT", "BOOL", "BOOLEAN", "DEFAULT",
 		}[t-TOKEN_ALTER]
+	case t <= TOKEN_AGAINST:
+		return []string{
+			"USING", "HASH", "BTREE", "INVERTED", "INDEXES",
+			"UNIQUE", "MATCH", "AGAINST",
+		}[t-TOKEN_USING]
 	case t <= TOKEN_DOT:
 		return []string{
 			"=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/",
@@ -447,4 +470,3 @@ func IsArithmeticOp(tt TokenType) bool {
 }
 
 // suppress unused warning
-var _ = unicode.IsSpace

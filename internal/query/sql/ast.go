@@ -159,6 +159,45 @@ type DescribeTableStmt struct {
 func (s *DescribeTableStmt) stmtNode() {}
 func (s *DescribeTableStmt) String() string { return "DESCRIBE ..." }
 
+// CreateIndexStmt CREATE [UNIQUE] INDEX [IF NOT EXISTS] name ON table(column) [USING type]
+type CreateIndexStmt struct {
+	IfNotExists bool
+	Name        string
+	Table       string
+	Column      string
+	IndexType   string // "HASH" | "BTREE" | "INVERTED"
+	Unique      bool
+}
+
+func (s *CreateIndexStmt) stmtNode()      {}
+func (s *CreateIndexStmt) String() string { return "CREATE INDEX ..." }
+
+// DropIndexStmt DROP INDEX [IF EXISTS] name
+type DropIndexStmt struct {
+	IfExists bool
+	Name     string
+}
+
+func (s *DropIndexStmt) stmtNode()      {}
+func (s *DropIndexStmt) String() string { return "DROP INDEX ..." }
+
+// ShowIndexesStmt SHOW INDEXES [FROM table]
+type ShowIndexesStmt struct {
+	Table string // 可选
+}
+
+func (s *ShowIndexesStmt) stmtNode()      {}
+func (s *ShowIndexesStmt) String() string { return "SHOW INDEXES" }
+
+// MatchExpr 全文匹配表达式：MATCH(col1[, col2...]) AGAINST ('query')
+type MatchExpr struct {
+	Columns []string
+	Query   string
+}
+
+func (e *MatchExpr) exprNode()      {}
+func (e *MatchExpr) String() string { return "MATCH(...) AGAINST (...)" }
+
 // ColumnDef 列定义
 type ColumnDef struct {
 	Name       string

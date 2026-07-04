@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -254,6 +253,3 @@ func (pq *priorityQueue) Pop() any {
 	*pq = old[:n-1]
 	return item
 }
-
-// suppress unused
-var _ = slog.Info

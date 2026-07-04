@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -17,22 +16,23 @@ import (
 	"github.com/startvibecoding/AgentNativeDB/api/mcp"
 	"github.com/startvibecoding/AgentNativeDB/config"
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
+	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
 	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
-func main() {
-	cfgPath := flag.String("config", "", "配置文件路径")
-	runMode := flag.String("mode", "server", "运行模式: server, mcp")
-	flag.Parse()
+func runServer(args []string) {
+	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	cfgPath := fs.String("config", "", "配置文件路径")
+	runMode := fs.String("mode", "server", "运行模式: server, mcp")
+	fs.Parse(args)
 
-	// 加载配置
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
-	// 初始化日志
+	// 日志
 	var logLevel slog.Level
 	switch cfg.Log.Level {
 	case "debug":
@@ -44,11 +44,10 @@ func main() {
 	default:
 		logLevel = slog.LevelInfo
 	}
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	// 打开存储引擎
+	// 存储
 	engine := badgerstore.New()
 	opts := storage.Options{
 		DataDir:          cfg.Storage.DataDir,
@@ -58,32 +57,38 @@ func main() {
 		NumMemTables:     cfg.Storage.NumMemTables,
 		CacheSizeMB:      cfg.Storage.CacheSizeMB,
 	}
-
 	if err := engine.Open(opts); err != nil {
 		log.Fatalf("open storage: %v", err)
 	}
 	defer engine.Close()
+	slog.Info("storage opened", "data_dir", cfg.Storage.DataDir)
 
-	slog.Info("storage engine opened", "data_dir", cfg.Storage.DataDir)
+	cacheEntries := cfg.Storage.CacheSizeMB * 512
+	if cacheEntries <= 0 {
+		cacheEntries = 512
+	}
+	cache := storage.NewCache(cacheEntries)
 
-	// 创建缓存
-	cache := storage.NewCache(512)
-
-	// 创建 Agent 组件
 	sessionMgr := agent.NewSessionManager(engine, cache)
 	memoryStore := agent.NewMemoryStore(engine, cache)
 	decisionRecorder := agent.NewDecisionRecorder(engine, cache)
 
-	// 根据模式运行
+	executor := sql.NewExecutor(engine)
+	if err := executor.Init(context.Background()); err != nil {
+		log.Fatalf("init executor: %v", err)
+	}
+
 	if *runMode == "mcp" {
-		runMCPMode(engine, sessionMgr, memoryStore, decisionRecorder)
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		srv := mcp.NewMCPServer(engine, sessionMgr, memoryStore, decisionRecorder, executor)
+		if err := srv.Run(context.Background()); err != nil {
+			log.Fatalf("mcp server: %v", err)
+		}
 		return
 	}
 
-	// 创建 HTTP 路由
-	router := apihttp.NewRouter(engine, sessionMgr, memoryStore, decisionRecorder)
+	router := apihttp.NewRouter(engine, sessionMgr, memoryStore, decisionRecorder, executor)
 
-	// 创建 HTTP 服务器
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,
@@ -91,7 +96,6 @@ func main() {
 		WriteTimeout: cfg.Server.WriteTimeout,
 	}
 
-	// 启动服务器
 	go func() {
 		slog.Info("starting server", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -99,33 +103,15 @@ func main() {
 		}
 	}()
 
-	// 优雅关闭
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	slog.Info("shutting down...")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
-
 	slog.Info("server stopped")
-}
-
-func runMCPMode(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder) {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	srv := mcp.NewMCPServer(engine, session, memory, decision)
-	if err := srv.Run(context.Background()); err != nil {
-		log.Fatalf("mcp server: %v", err)
-	}
-}
-
-// printJSON 美化打印 JSON（调试用）
-func printJSON(v any) {
-	b, _ := json.MarshalIndent(v, "", "  ")
-	fmt.Println(string(b))
 }

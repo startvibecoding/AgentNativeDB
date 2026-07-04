@@ -8,13 +8,14 @@ import (
 
 // badgerIterator 迭代器实现
 type badgerIterator struct {
-	it       *badger.Iterator
-	txn      *badger.Txn
-	start    []byte
-	end      []byte
-	limit    int
-	count    int
-	started  bool
+	it      *badger.Iterator
+	txn     *badger.Txn
+	start   []byte
+	end     []byte
+	limit   int
+	count   int
+	started bool
+	reverse bool
 }
 
 // Item 返回当前键值对
@@ -32,8 +33,13 @@ func (iter *badgerIterator) Item() (key, value []byte) {
 func (iter *badgerIterator) Next() bool {
 	if !iter.started {
 		iter.started = true
-		// 定位到起始位置
-		iter.it.Seek(iter.start)
+		// 定位到起始位置：反向扫描时从 end-一位开始
+		if iter.reverse && iter.end != nil {
+			seekTo := prevKey(iter.end)
+			iter.it.Seek(seekTo)
+		} else {
+			iter.it.Seek(iter.start)
+		}
 	} else {
 		iter.it.Next()
 	}
@@ -42,10 +48,16 @@ func (iter *badgerIterator) Next() bool {
 		return false
 	}
 
-	// 检查上界
+	// 检查边界
 	key := iter.it.Item().Key()
-	if iter.end != nil && bytes.Compare(key, iter.end) >= 0 {
-		return false
+	if iter.reverse {
+		if bytes.Compare(key, iter.start) < 0 {
+			return false
+		}
+	} else {
+		if iter.end != nil && bytes.Compare(key, iter.end) >= 0 {
+			return false
+		}
 	}
 
 	// 检查限制
@@ -55,6 +67,25 @@ func (iter *badgerIterator) Next() bool {
 	}
 
 	return true
+}
+
+// prevKey 返回字典序上 key 的前一个（用于 reverse Seek 的上界）
+func prevKey(key []byte) []byte {
+	if len(key) == 0 {
+		return key
+	}
+	p := make([]byte, len(key))
+	copy(p, key)
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] > 0 {
+			p[i]--
+			for j := i + 1; j < len(p); j++ {
+				p[j] = 0xFF
+			}
+			return p
+		}
+	}
+	return p
 }
 
 // Valid 检查迭代器是否有效

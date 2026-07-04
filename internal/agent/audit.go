@@ -82,10 +82,9 @@ func (a *AuditLogger) ListByOperation(ctx context.Context, op AuditOperation, li
 
 // ListRecent 最近的审计事件
 func (a *AuditLogger) ListRecent(ctx context.Context, since time.Time, limit int) ([]*AuditEvent, error) {
-	prefix := []byte{storage.PrefixSystem}
-	start, end := storage.PrefixRange(prefix)
-
-	iter, err := a.engine.Scan(ctx, start, end, storage.ScanOptions{Limit: limit * 2})
+	// 只扫审计事件前缀，避免与 room/task/msg 等 PrefixSystem 空间内其他类型混淆
+	prefix := storage.EncodeKey(storage.PrefixSystem, "audit:")
+	iter, err := a.engine.PrefixScan(ctx, prefix, storage.ScanOptions{Limit: limit * 2})
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +95,9 @@ func (a *AuditLogger) ListRecent(ctx context.Context, since time.Time, limit int
 		_, val := iter.Item()
 		var event AuditEvent
 		if err := json.Unmarshal(val, &event); err != nil {
+			continue
+		}
+		if event.ID == "" {
 			continue
 		}
 		if event.Timestamp.Before(since) {

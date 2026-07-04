@@ -1,6 +1,12 @@
 package storage
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrKeyNotFound 当 Get 未命中时返回（可用 errors.Is 判定）
+var ErrKeyNotFound = errors.New("storage: key not found")
 
 // Engine 定义存储引擎的核心接口
 type Engine interface {

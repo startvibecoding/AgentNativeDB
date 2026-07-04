@@ -33,12 +33,18 @@ type TableManager struct {
 	nextPrefix byte
 }
 
+// 用户表元数据键前缀（在 PrefixSystem 命名空间下）
+const (
+	tableMetaKeyPrefix   = "table:"
+	userTablePrefixStart = 0x30 // 用户表存储前缀起始（避免与内置表冲突）
+)
+
 // NewTableManager 创建表管理器
 func NewTableManager(engine Engine) *TableManager {
 	return &TableManager{
 		engine:     engine,
 		tables:     make(map[string]*TableMetadata),
-		nextPrefix: 0x30, // 用户表从 0x30 开始
+		nextPrefix: userTablePrefixStart,
 	}
 }
 
@@ -47,8 +53,9 @@ func (tm *TableManager) Init(ctx context.Context) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	// 加载系统表元数据
-	iter, err := tm.engine.PrefixScan(ctx, []byte{PrefixSystem}, ScanOptions{})
+	// 只加载 [PrefixSystem]"table:" 前缀的元数据，避免与 room/task/audit 等其他系统数据混淆
+	prefix := EncodeKey(PrefixSystem, tableMetaKeyPrefix)
+	iter, err := tm.engine.PrefixScan(ctx, prefix, ScanOptions{})
 	if err != nil {
 		return fmt.Errorf("load table metadata: %w", err)
 	}
@@ -58,6 +65,10 @@ func (tm *TableManager) Init(ctx context.Context) error {
 		_, val := iter.Item()
 		var meta TableMetadata
 		if err := json.Unmarshal(val, &meta); err != nil {
+			continue
+		}
+		// 二次校验：仅接受具备名称与合法用户前缀的记录
+		if meta.Name == "" || meta.Prefix < userTablePrefixStart {
 			continue
 		}
 		tm.tables[meta.Name] = &meta
@@ -193,7 +204,7 @@ func (tm *TableManager) CreateTable(ctx context.Context, name string, columns []
 		return fmt.Errorf("marshal table metadata: %w", err)
 	}
 
-	key := EncodeKey(PrefixSystem, "table:"+name)
+	key := EncodeKey(PrefixSystem, tableMetaKeyPrefix+name)
 	if err := tm.engine.Set(ctx, key, data); err != nil {
 		return fmt.Errorf("save table metadata: %w", err)
 	}
@@ -247,7 +258,7 @@ func (tm *TableManager) DropTable(ctx context.Context, name string, ifExists boo
 	}
 
 	// 删除表元数据
-	metaKey := EncodeKey(PrefixSystem, "table:"+name)
+	metaKey := EncodeKey(PrefixSystem, tableMetaKeyPrefix+name)
 	if err := tm.engine.Delete(ctx, metaKey); err != nil {
 		return fmt.Errorf("delete table metadata: %w", err)
 	}
@@ -328,7 +339,7 @@ func (tm *TableManager) AlterTable(ctx context.Context, name string, action Alte
 		return fmt.Errorf("marshal table metadata: %w", err)
 	}
 
-	key := EncodeKey(PrefixSystem, "table:"+name)
+	key := EncodeKey(PrefixSystem, tableMetaKeyPrefix+name)
 	if err := tm.engine.Set(ctx, key, data); err != nil {
 		return fmt.Errorf("save table metadata: %w", err)
 	}

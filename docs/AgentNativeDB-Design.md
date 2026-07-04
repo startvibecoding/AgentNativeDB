@@ -953,7 +953,7 @@ SELECT agent_record_decision(
 | 任务 | 内容 | 产出 | 周期 |
 |------|------|------|------|
 | 9.1 MCP Server | MCP 协议实现、工具注册 | api/mcp/server.go | 1.5 周 |
-| 9.2 CLI 工具 | 基于 `flag` 的命令行工具 | cmd/cli/ | 1 周 |
+| 9.2 CLI 工具 | 基于 `flag` 的统一入口 | cmd/andb/ (server/cli/client 子命令) | 1 周 |
 | 9.3 Go SDK | 独立的客户端库包 | sdk/ | 1 周 |
 | 9.4 文档 | API 文档、使用指南、示例 | docs/ | 0.5 周 |
 

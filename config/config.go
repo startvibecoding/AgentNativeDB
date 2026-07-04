@@ -105,29 +105,3 @@ func Default() *Config {
 		},
 	}
 }
-
-// StorageOptions 转换为 storage.Options
-func (c *Config) StorageOptions() struct {
-	DataDir          string
-	SyncWrites       bool
-	ValueLogFileSize int64
-	MemTableSize     int64
-	NumMemTables     int
-	CacheSizeMB      int
-} {
-	return struct {
-		DataDir          string
-		SyncWrites       bool
-		ValueLogFileSize int64
-		MemTableSize     int64
-		NumMemTables     int
-		CacheSizeMB      int
-	}{
-		DataDir:          c.Storage.DataDir,
-		SyncWrites:       c.Storage.SyncWrites,
-		ValueLogFileSize: c.Storage.ValueLogFileSize,
-		MemTableSize:     c.Storage.MemTableSize,
-		NumMemTables:     c.Storage.NumMemTables,
-		CacheSizeMB:      c.Storage.CacheSizeMB,
-	}
-}

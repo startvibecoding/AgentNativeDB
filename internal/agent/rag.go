@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -265,6 +264,3 @@ type SearchHit struct {
 	Distance float32 `json:"distance"`
 	Score    float32 `json:"score"`
 }
-
-// suppress unused
-var _ = fmt.Sprintf

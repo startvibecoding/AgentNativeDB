@@ -2,6 +2,7 @@ package apihttp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
+	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
 	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
@@ -32,7 +34,11 @@ func setupTestServer(t *testing.T) (*Router, *httptest.Server) {
 	session := agent.NewSessionManager(engine, cache)
 	memory := agent.NewMemoryStore(engine, cache)
 	decision := agent.NewDecisionRecorder(engine, cache)
-	router := NewRouter(engine, session, memory, decision)
+	executor := sql.NewExecutor(engine)
+	if err := executor.Init(context.Background()); err != nil {
+		t.Fatalf("init executor: %v", err)
+	}
+	router := NewRouter(engine, session, memory, decision, executor)
 
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)

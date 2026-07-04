@@ -21,16 +21,18 @@ type Router struct {
 	session  *agent.SessionManager
 	memory   *agent.MemoryStore
 	decision *agent.DecisionRecorder
+	executor *sql.Executor
 }
 
 // NewRouter 创建路由器
-func NewRouter(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder) *Router {
+func NewRouter(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder, executor *sql.Executor) *Router {
 	r := &Router{
 		mux:      http.NewServeMux(),
 		engine:   engine,
 		session:  session,
 		memory:   memory,
 		decision: decision,
+		executor: executor,
 	}
 	r.registerRoutes()
 	return r
@@ -393,7 +395,7 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// 计划
-	planner := sql.NewPlanner()
+	planner := r.executor.Planner()
 	plan, err := planner.Plan(stmt)
 	if err != nil {
 		jsonError(w, 400, fmt.Sprintf("plan error: %v", err))
@@ -401,8 +403,7 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// 执行
-	executor := sql.NewExecutor(r.engine)
-	result, err := executor.Execute(req.Context(), plan)
+	result, err := r.executor.Execute(req.Context(), plan)
 	if err != nil {
 		jsonError(w, 500, fmt.Sprintf("execute error: %v", err))
 		return
