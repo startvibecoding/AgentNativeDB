@@ -1,0 +1,28 @@
+# 构建产物
+bin/
+*.exe
+
+# 数据目录
+data/
+*.vlog
+*.mem
+MANIFEST
+KEYREGISTRY
+DISCARD
+LOCK
+
+# 测试产物
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
