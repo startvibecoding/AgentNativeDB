@@ -14,6 +14,7 @@
 - **数据血缘** — 追踪数据来源和变换历史
 - **多 Agent 协作** — 协作房间、消息传递、共享记忆
 - **最小依赖** — 唯一外部依赖：BadgerDB（纯 Go KV 存储）
+- **HTTP 客户端** — 支持命令历史、自动补全、颜色输出、多行SQL、JSON导出
 
 ## 快速开始
 
@@ -27,14 +28,24 @@ make build
 # 启动 MCP Server（stdio 传输）
 ./bin/server -mode mcp
 
-# 交互式 SQL CLI
+# 交互式 SQL CLI（本地）
 ./bin/cli
+
+# HTTP 客户端（连接远程服务器）
+./bin/client -server localhost:8400
+
+# 客户端功能演示
+./bin/client -server localhost:8400 -format json sessions
+./bin/client -server localhost:8400 export sessions sessions.json
 
 # 运行测试
 make test
 
 # 基准测试
 make bench
+
+# 测试客户端
+make test-client
 ```
 
 ## SQL 示例
@@ -106,7 +117,8 @@ SELECT * FROM agent_memories ORDER BY importance DESC LIMIT 10;
 ```
 AgentNativeDB/
 ├── cmd/server/          HTTP + MCP 服务入口
-├── cmd/cli/             交互式 SQL CLI
+├── cmd/cli/             交互式 SQL CLI（本地）
+├── cmd/client/          HTTP 客户端（远程连接）
 ├── api/http/            RESTful API
 ├── api/mcp/             MCP Server
 ├── config/              配置管理
@@ -119,7 +131,9 @@ AgentNativeDB/
 │   ├── vector/          HNSW 向量索引
 │   ├── graph/           图存储
 │   └── knowledge/       数据血缘
-└── docs/                设计文档
+├── docs/                设计文档
+├── test_client.sh       客户端测试脚本
+└── config.example.json  示例配置文件
 ```
 
 ## 技术选型

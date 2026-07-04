@@ -1,0 +1,33 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8400,
+    "read_timeout": 30000000000,
+    "write_timeout": 30000000000
+  },
+  "storage": {
+    "data_dir": "./data",
+    "value_log_file_size": 67108864,
+    "mem_table_size": 16777216,
+    "num_mem_tables": 3,
+    "sync_writes": true,
+    "cache_size_mb": 256
+  },
+  "agent": {
+    "session_timeout": 86400000000000,
+    "max_memories": 10000,
+    "short_term_window": 50,
+    "cleanup_interval": 3600000000000
+  },
+  "vector": {
+    "default_dimension": 1536,
+    "default_metric": "cosine",
+    "hnsw_m": 16,
+    "hnsw_ef_construction": 200,
+    "hnsw_ef_search": 64
+  },
+  "log": {
+    "level": "info",
+    "format": "text"
+  }
+}

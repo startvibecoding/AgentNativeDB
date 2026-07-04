@@ -1,13 +1,22 @@
-.PHONY: build test bench run clean lint fmt vet
+.PHONY: build test bench run clean lint fmt vet client
 
 # 构建
 build:
 	go build -o bin/server ./cmd/server
 	go build -o bin/cli ./cmd/cli
+	go build -o bin/client ./cmd/client
+
+# 构建客户端
+client:
+	go build -o bin/client ./cmd/client
 
 # 运行服务端
 run: build
 	./bin/server
+
+# 运行客户端
+run-client: client
+	./bin/client
 
 # 测试
 test:
@@ -33,6 +42,17 @@ vet:
 # 清理
 clean:
 	rm -rf bin/ data/
+
+# 测试客户端
+test-client: client
+	./test_client.sh
+
+# 运行示例
+example: build
+	./bin/server &
+	sleep 2
+	./bin/client -server localhost:8400
+	./bin/client -server localhost:8400 sessions
 
 # Tidy 依赖
 tidy:
