@@ -531,8 +531,22 @@ func (e *Executor) executeInsert(ctx context.Context, node *InsertPlan) (*Result
 		}
 
 		// 生成 ID（如果未指定则自动生成）
-		id, ok := row["id"].(string)
-		if !ok || id == "" {
+		id := ""
+		if v, ok := row["id"]; ok && v != nil {
+			switch val := v.(type) {
+			case string:
+				id = val
+			case int64:
+				id = strconv.FormatInt(val, 10)
+			case float64:
+				id = strconv.FormatFloat(val, 'f', -1, 64)
+			case bool:
+				id = strconv.FormatBool(val)
+			default:
+				id = fmt.Sprintf("%v", val)
+			}
+		}
+		if id == "" {
 			id = util.NewUUID()
 			row["id"] = id
 		}

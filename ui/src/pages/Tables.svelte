@@ -122,6 +122,11 @@
     whereClause = '';
     orderByClause = '';
     dataError = '';
+    if (!tableSchema) {
+      try {
+        tableSchema = await executeQuery(`DESCRIBE ${selectedTable}`);
+      } catch { /* ignore */ }
+    }
     await loadData();
   }
 
@@ -247,6 +252,14 @@
       .map(col => {
         const v = editValues[col];
         if (v === '' || v === null || v === undefined) return `${col} = NULL`;
+        const typeStr = getColumnType(col);
+        if (isStringType(typeStr)) {
+          return `${col} = '${String(v).replace(/'/g, "''")}'`;
+        }
+        if (typeStr.startsWith('BOOL')) {
+          const s = String(v).toLowerCase();
+          return `${col} = ${s === 'true' || s === '1' ? 'TRUE' : 'FALSE'}`;
+        }
         if (typeof v === 'number' || !isNaN(Number(v))) return `${col} = ${v}`;
         return `${col} = '${String(v).replace(/'/g, "''")}'`;
       })
@@ -295,12 +308,18 @@
     }
   }
 
+  function getInsertColumns() {
+    if (dataResult?.Columns?.length > 0) return dataResult.Columns;
+    if (tableSchema?.Rows?.length > 0) {
+      return tableSchema.Rows.map(r => r.Values?.field).filter(Boolean);
+    }
+    return [];
+  }
+
   function startInsertRow() {
     insertingNew = true;
     newRowValues = {};
-    if (dataResult?.Columns) {
-      for (const c of dataResult.Columns) newRowValues[c] = '';
-    }
+    for (const c of getInsertColumns()) newRowValues[c] = '';
   }
 
   function cancelInsertRow() {
@@ -308,12 +327,29 @@
     newRowValues = {};
   }
 
+  function getColumnType(col) {
+    const row = tableSchema?.Rows?.find(r => r.Values?.field === col);
+    return String(row?.Values?.type || '').toUpperCase();
+  }
+
+  function isStringType(typeStr) {
+    return typeStr.startsWith('STRING') || typeStr.startsWith('VARCHAR') || typeStr.startsWith('TEXT');
+  }
+
   async function saveInsertRow() {
-    if (!dataResult?.Columns) return;
-    const cols = dataResult.Columns;
+    const cols = getInsertColumns();
+    if (cols.length === 0) return;
     const vals = cols.map(col => {
       const v = newRowValues[col];
       if (v === '' || v === null || v === undefined) return 'NULL';
+      const typeStr = getColumnType(col);
+      if (isStringType(typeStr)) {
+        return `'${String(v).replace(/'/g, "''")}'`;
+      }
+      if (typeStr.startsWith('BOOL')) {
+        const s = String(v).toLowerCase();
+        return s === 'true' || s === '1' ? 'TRUE' : 'FALSE';
+      }
       if (typeof v === 'number' || !isNaN(Number(v))) return String(v);
       return `'${String(v).replace(/'/g, "''")}'`;
     }).join(', ');
@@ -669,7 +705,7 @@
           <table>
             <thead>
               <tr>
-                {#each dataResult?.Columns || [] as col}
+                {#each getInsertColumns() as col}
                   <th>{col}</th>
                 {/each}
                 <th style="width: 140px;">{i18n.t('tables.operation')}</th>
@@ -678,7 +714,7 @@
             <tbody>
               {#if insertingNew}
                 <tr class="editing-row">
-                  {#each dataResult?.Columns || [] as col}
+                  {#each getInsertColumns() as col}
                     <td class="mono text-sm">
                       <input class="cell-input" bind:value={newRowValues[col]} />
                     </td>
