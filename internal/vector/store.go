@@ -51,23 +51,42 @@ func (vs *VectorStore) CreateIndex(name string, dim int, metric string) error {
 	return nil
 }
 
-// Insert 向量插入
+// Insert 向量插入(兼容旧签名,不带 payload)
 func (vs *VectorStore) Insert(indexName, id string, vector []float32) error {
+	return vs.InsertWithPayload(indexName, id, vector, nil)
+}
+
+// InsertWithPayload 向量插入(可携带 payload / metadata)
+func (vs *VectorStore) InsertWithPayload(indexName, id string, vector []float32, payload []byte) error {
 	idx, ok := vs.indexes[indexName]
 	if !ok {
 		return fmt.Errorf("index %s not found", indexName)
 	}
 
-	// 持久化到 BadgerDB
+	// 持久化向量到 BadgerDB
 	vecKey := EncodeVectorKey(indexName, id)
 	vecData := Float32sToBytes(vector)
 	if err := vs.engine.Set(context.Background(), vecKey, vecData); err != nil {
 		return fmt.Errorf("persist vector: %w", err)
 	}
 
+	// 持久化 payload(如有)
+	if len(payload) > 0 {
+		payloadKey := storage.EncodeVectorPayloadKey(indexName, id)
+		if err := vs.engine.Set(context.Background(), payloadKey, payload); err != nil {
+			return fmt.Errorf("persist payload: %w", err)
+		}
+	}
+
 	// 插入 HNSW 索引
 	idx.Insert(id, vector)
 	return nil
+}
+
+// GetPayload 获取向量的 payload
+func (vs *VectorStore) GetPayload(indexName, id string) ([]byte, error) {
+	payloadKey := storage.EncodeVectorPayloadKey(indexName, id)
+	return vs.engine.Get(context.Background(), payloadKey)
 }
 
 // Search 向量搜索
@@ -170,15 +189,16 @@ func BytesToFloat32s(data []byte) []float32 {
 	return floats
 }
 
-// VectorSearchResult 向量搜索结果（带向量数据）
+// VectorSearchResult 向量搜索结果（可携带向量数据 / payload）
 type VectorSearchResult struct {
 	ID       string
 	Distance float32
 	Vector   []float32
+	Payload  []byte
 }
 
-// SearchWithVectors 搜索并返回向量数据
-func (vs *VectorStore) SearchWithVectors(indexName string, query []float32, topK int) ([]VectorSearchResult, error) {
+// SearchWithVectors 搜索并返回向量数据,withPayload 控制是否回查 payload
+func (vs *VectorStore) SearchWithVectors(indexName string, query []float32, topK int, withPayload bool) ([]VectorSearchResult, error) {
 	results, err := vs.Search(indexName, query, topK)
 	if err != nil {
 		return nil, err
@@ -186,20 +206,32 @@ func (vs *VectorStore) SearchWithVectors(indexName string, query []float32, topK
 
 	var enriched []VectorSearchResult
 	for _, r := range results {
-		vecKey := EncodeVectorKey(indexName, r.ID)
-		vecData, err := vs.engine.Get(context.Background(), vecKey)
-		if err != nil {
-			continue
-		}
-
-		enriched = append(enriched, VectorSearchResult{
+		item := VectorSearchResult{
 			ID:       r.ID,
 			Distance: r.Distance,
-			Vector:   BytesToFloat32s(vecData),
-		})
+		}
+
+		vecKey := EncodeVectorKey(indexName, r.ID)
+		if vecData, err := vs.engine.Get(context.Background(), vecKey); err == nil {
+			item.Vector = BytesToFloat32s(vecData)
+		}
+
+		if withPayload {
+			payloadKey := storage.EncodeVectorPayloadKey(indexName, r.ID)
+			if payload, err := vs.engine.Get(context.Background(), payloadKey); err == nil {
+				item.Payload = payload
+			}
+		}
+
+		enriched = append(enriched, item)
 	}
 
 	return enriched, nil
+}
+
+// SearchWithPayloads 搜索并返回 payload
+func (vs *VectorStore) SearchWithPayloads(indexName string, query []float32, topK int) ([]VectorSearchResult, error) {
+	return vs.SearchWithVectors(indexName, query, topK, true)
 }
 
 // ListIndexes 列出所有索引
@@ -210,6 +242,17 @@ func (vs *VectorStore) ListIndexes() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// HasIndex 判断索引是否存在
+func (vs *VectorStore) HasIndex(name string) bool {
+	_, ok := vs.indexes[name]
+	return ok
+}
+
+// Dim 获取索引维度, 不存在时返回 0
+func (vs *VectorStore) Dim(name string) int {
+	return vs.dims[name]
 }
 
 // ParseVectorLiteral 解析向量字面量 "[0.1, 0.2, 0.3]"

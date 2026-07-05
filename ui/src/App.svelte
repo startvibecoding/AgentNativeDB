@@ -9,6 +9,8 @@
   import Sessions from './pages/Sessions.svelte';
   import Memories from './pages/Memories.svelte';
   import Decisions from './pages/Decisions.svelte';
+  import Vectors from './pages/Vectors.svelte';
+  import AIDashboard from './pages/AIDashboard.svelte';
 
   let page = $state('dashboard');
   let ok = $state(false);
@@ -23,6 +25,8 @@
       sessions: i18n.t('nav.sessions'),
       memories: i18n.t('nav.memories'),
       decisions: i18n.t('nav.decisions'),
+      vectors: i18n.t('nav.vectors'),
+      'ai-dashboard': i18n.t('nav.aiDashboard'),
     };
     return map[page] || page;
   });
@@ -75,6 +79,10 @@
         <Memories />
       {:else if page === 'decisions'}
         <Decisions />
+      {:else if page === 'vectors'}
+        <Vectors />
+      {:else if page === 'ai-dashboard'}
+        <AIDashboard />
       {/if}
     </div>
   </main>

@@ -106,3 +106,33 @@ export async function getDecisionTree(id) {
 export async function executeQuery(sql) {
   return request('POST', '/query', { sql });
 }
+
+// ========== Vector ==========
+
+export async function listVectorIndexes() {
+  return request('GET', '/vector/indexes');
+}
+
+export async function createVectorIndex(name, dim, metric) {
+  return request('POST', '/vector/indexes', { name, dim, metric });
+}
+
+export async function getVectorIndex(name) {
+  return request('GET', `/vector/indexes/${encodeURIComponent(name)}`);
+}
+
+export async function insertVector(name, id, vector, payload) {
+  const body = { id, vector };
+  if (payload !== undefined && payload !== null) {
+    body.payload = payload;
+  }
+  return request('POST', `/vector/indexes/${encodeURIComponent(name)}/vectors`, body);
+}
+
+export async function deleteVector(name, id) {
+  return request('DELETE', `/vector/indexes/${encodeURIComponent(name)}/vectors/${encodeURIComponent(id)}`);
+}
+
+export async function searchVector(name, vector, topK) {
+  return request('POST', `/vector/indexes/${encodeURIComponent(name)}/search`, { vector, top_k: topK });
+}

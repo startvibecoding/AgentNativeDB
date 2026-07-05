@@ -523,6 +523,9 @@ func (p *Parser) parseColumnType() (ColumnType, error) {
 	case TOKEN_TEXT:
 		p.advance()
 		colType.Name = "TEXT"
+	case TOKEN_STRING_TYPE:
+		p.advance()
+		colType.Name = "STRING"
 	case TOKEN_FLOAT_TYPE:
 		p.advance()
 		colType.Name = "FLOAT"

@@ -21,16 +21,17 @@ import (
 //	0x20 = graph_adjacency
 //	0xFF = system_metadata
 const (
-	PrefixSession  byte = 0x01
-	PrefixMemory   byte = 0x02
-	PrefixDecision byte = 0x03
-	PrefixEntity   byte = 0x04
-	PrefixRelation byte = 0x05
-	PrefixLineage  byte = 0x06
-	PrefixVector   byte = 0x10
-	PrefixIndex    byte = 0x11 // 用户表索引（Hash / BTree / Inverted）
-	PrefixGraph    byte = 0x20
-	PrefixSystem   byte = 0xFF
+	PrefixSession       byte = 0x01
+	PrefixMemory        byte = 0x02
+	PrefixDecision      byte = 0x03
+	PrefixEntity        byte = 0x04
+	PrefixRelation      byte = 0x05
+	PrefixLineage       byte = 0x06
+	PrefixVector        byte = 0x10
+	PrefixVectorPayload byte = 0x12 // 向量附加 payload
+	PrefixIndex         byte = 0x11 // 用户表索引（Hash / BTree / Inverted）
+	PrefixGraph         byte = 0x20
+	PrefixSystem        byte = 0xFF
 )
 
 // EncodeKey 编码主键: [prefix][id]
@@ -81,6 +82,11 @@ func DecodeIndexID(key []byte) string {
 // EncodeVectorKey 编码向量存储 key: [0x10][indexName][0x00][id]
 func EncodeVectorKey(indexName string, id string) []byte {
 	return EncodeIndexKey(PrefixVector, indexName, id)
+}
+
+// EncodeVectorPayloadKey 编码向量 payload key: [0x12][indexName][0x00][id]
+func EncodeVectorPayloadKey(indexName string, id string) []byte {
+	return EncodeIndexKey(PrefixVectorPayload, indexName, id)
 }
 
 // PrefixRange 返回 prefix 扫描的 [start, end) 范围

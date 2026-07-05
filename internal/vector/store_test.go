@@ -212,7 +212,7 @@ func TestVectorStore_SearchWithVectors(t *testing.T) {
 		env.store.Insert("test", id, vec)
 	}
 
-	results, err := env.store.SearchWithVectors("test", []float32{1.0, 0.0, 0.0}, 2)
+	results, err := env.store.SearchWithVectors("test", []float32{1.0, 0.0, 0.0}, 2, false)
 	if err != nil {
 		t.Fatalf("search with vectors: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestVectorStore_SearchWithVectors(t *testing.T) {
 func TestVectorStore_SearchWithVectorsNotFoundIndex(t *testing.T) {
 	env := newVectorStoreTestEnv(t)
 
-	_, err := env.store.SearchWithVectors("nonexistent", []float32{0.1}, 5)
+	_, err := env.store.SearchWithVectors("nonexistent", []float32{0.1}, 5, false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent index")
 	}

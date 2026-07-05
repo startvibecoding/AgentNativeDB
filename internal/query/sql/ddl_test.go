@@ -30,6 +30,11 @@ func TestParseCreateTable(t *testing.T) {
 			input:   "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT NOT NULL, note TEXT)",
 			wantErr: false,
 		},
+		{
+			name:    "create table with STRING type",
+			input:   "CREATE TABLE aaa2a (id STRING PRIMARY KEY, aa2a STRING)",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -38,7 +38,7 @@ func setupTestServer(t *testing.T) (*Router, *httptest.Server) {
 	if err := executor.Init(context.Background()); err != nil {
 		t.Fatalf("init executor: %v", err)
 	}
-	router := NewRouter(engine, session, memory, decision, executor)
+	router := NewRouter(engine, session, memory, decision, executor, nil)
 
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)

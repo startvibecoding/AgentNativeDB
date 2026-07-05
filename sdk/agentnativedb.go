@@ -311,18 +311,23 @@ func (db *DB) InsertVector(indexName, id string, vector []float32) error {
 	return db.vectorStore.Insert(indexName, id, vector)
 }
 
-// SearchVector 向量搜索
+// SearchVector 向量搜索(返回 payload)
 func (db *DB) SearchVector(indexName string, query []float32, topK int) ([]VectorResult, error) {
-	results, err := db.vectorStore.Search(indexName, query, topK)
+	results, err := db.vectorStore.SearchWithPayloads(indexName, query, topK)
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]VectorResult, len(results))
 	for i, r := range results {
-		out[i] = VectorResult{ID: r.ID, Distance: r.Distance, Score: 1.0 - r.Distance}
+		out[i] = VectorResult{ID: r.ID, Distance: r.Distance, Score: 1.0 - r.Distance, Payload: r.Payload}
 	}
 	return out, nil
+}
+
+// InsertVectorWithPayload 插入向量并携带 payload / metadata
+func (db *DB) InsertVectorWithPayload(indexName, id string, vector []float32, payload []byte) error {
+	return db.vectorStore.InsertWithPayload(indexName, id, vector, payload)
 }
 
 // DeleteVector 删除向量
@@ -509,6 +514,7 @@ type VectorResult struct {
 	ID       string
 	Distance float32
 	Score    float32
+	Payload  []byte // 附加的 JSON / metadata
 }
 
 // Node 图节点

@@ -13,19 +13,37 @@
   let createTableName = $state('');
   let createColumns = $state([{ name: 'id', type: 'STRING', primaryKey: true }]);
 
-  // 子视图: 'list' | 'view' | 'edit'
+  // 子视图: 'list' | 'data' | 'schema'
   let currentView = $state('list');
 
-  // 查看数据
-  let viewData = $state(null);
-  let viewLoading = $state(false);
-
-  // 编辑数据
-  let editData = $state(null);
-  let editLoading = $state(false);
+  // 数据视图 (合并查看/编辑)
+  let dataResult = $state(null);
+  let dataLoading = $state(false);
+  let dataError = $state('');
   let editingRow = $state(-1);
   let editValues = $state({});
   let editSaving = $state(false);
+  let insertingNew = $state(false);
+  let newRowValues = $state({});
+
+  // 分页与查询条件
+  let pageSize = $state(50);
+  let pageIndex = $state(0);
+  let totalRows = $state(0);
+  let whereClause = $state('');
+  let orderByClause = $state('');
+
+  // 表结构编辑
+  let schemaCols = $state([]);
+  let schemaOriginal = $state([]);
+  let schemaAddCol = $state({ name: '', type: 'STRING', primaryKey: false });
+  let schemaSaving = $state(false);
+
+  // 索引管理
+  let tableIndexes = $state([]);
+  let indexLoading = $state(false);
+  let newIndex = $state({ name: '', column: '', type: 'BTREE' });
+  const indexTypes = ['HASH', 'BTREE', 'INVERTED'];
 
   onMount(loadTables);
 
@@ -45,72 +63,186 @@
     selectedTable = name;
     currentView = 'list';
     tableSchema = null;
-    viewData = null;
-    editData = null;
+    dataResult = null;
     editingRow = -1;
+    tableIndexes = [];
+    error = '';
     try {
-      const schema = await executeQuery(`DESCRIBE ${name}`).catch(() => null);
+      const schema = await executeQuery(`DESCRIBE ${name}`);
       tableSchema = schema;
+      await loadIndexes();
     } catch (e) {
-      error = e.message;
+      error = `加载表结构失败: ${e.message}`;
+      tableSchema = null;
     }
   }
 
-  async function viewTableData() {
-    viewLoading = true;
+  async function loadIndexes() {
+    if (!selectedTable) return;
+    indexLoading = true;
     try {
-      const data = await executeQuery(`SELECT * FROM ${selectedTable} LIMIT 200`);
-      viewData = data;
-      currentView = 'view';
+      const result = await executeQuery(`SHOW INDEXES FROM ${selectedTable}`);
+      tableIndexes = result?.Rows || [];
     } catch (e) {
-      error = e.message;
+      // 某些表可能不支持索引查询,静默忽略
+      tableIndexes = [];
     } finally {
-      viewLoading = false;
+      indexLoading = false;
     }
   }
 
-  async function editTableData() {
-    editLoading = true;
+  async function createIndex() {
+    if (!selectedTable || !newIndex.name.trim() || !newIndex.column.trim()) return;
+    const idxName = newIndex.name.trim();
+    const colName = newIndex.column.trim();
+    const idxType = newIndex.type || 'BTREE';
+    const sql = `CREATE INDEX ${idxName} ON ${selectedTable}(${colName}) USING ${idxType}`;
     try {
-      const data = await executeQuery(`SELECT * FROM ${selectedTable} LIMIT 200`);
-      editData = data;
-      editingRow = -1;
-      editValues = {};
-      currentView = 'edit';
+      await executeQuery(sql);
+      newIndex = { name: '', column: '', type: 'BTREE' };
+      await loadIndexes();
     } catch (e) {
       error = e.message;
-    } finally {
-      editLoading = false;
     }
   }
 
-  function startEditRow(idx) {
-    if (!editData?.Columns || !editData?.Rows) return;
-    const row = editData.Rows[idx];
+  async function dropIndex(idxName) {
+    if (!confirm(`${i18n.t('tables.dropIndex')} ${idxName}?`)) return;
+    try {
+      await executeQuery(`DROP INDEX ${idxName}`);
+      await loadIndexes();
+    } catch (e) {
+      error = e.message;
+    }
+  }
+
+  async function openDataView() {
+    currentView = 'data';
+    pageIndex = 0;
+    whereClause = '';
+    orderByClause = '';
+    dataError = '';
+    await loadData();
+  }
+
+  async function openSchemaEdit() {
+    currentView = 'schema';
+    error = '';
+    // 如果未加载 schema，先重新拉取一次
+    if (!tableSchema) {
+      try {
+        tableSchema = await executeQuery(`DESCRIBE ${selectedTable}`);
+      } catch (e) {
+        error = `加载表结构失败: ${e.message}`;
+      }
+    }
+    // 复制当前 schema 为可编辑对象
+    schemaCols = (tableSchema?.Rows || []).map(r => ({
+      name: r.Values?.field || '',
+      type: parseTypeFromDescribe(r.Values?.type || 'STRING'),
+      length: parseLenFromDescribe(r.Values?.type || ''),
+      primaryKey: !!r.Values?.key,
+      nullable: !!r.Values?.null,
+      defaultVal: r.Values?.default ?? '',
+      dropping: false,
+      isNew: false,
+    }));
+    schemaOriginal = JSON.parse(JSON.stringify(schemaCols));
+    schemaAddCol = { name: '', type: 'STRING', length: 0, primaryKey: false, nullable: true };
+  }
+
+  async function openIndexView() {
+    currentView = 'indexes';
+    error = '';
+    if (!tableSchema) {
+      try {
+        tableSchema = await executeQuery(`DESCRIBE ${selectedTable}`);
+      } catch (e) {
+        error = `加载表结构失败: ${e.message}`;
+      }
+    }
+    await loadIndexes();
+  }
+
+  function parseLenFromDescribe(t) {
+    const m = String(t).match(/\((\d+)\)/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function parseTypeFromDescribe(t) {
+    const s = String(t).toUpperCase().split('(')[0];
+    const map = {
+      'INTEGER': 'INT',
+      'BOOLEAN': 'BOOL',
+      'VARCHAR': 'VARCHAR',
+      'TEXT': 'TEXT',
+      'STRING': 'STRING',
+      'INT': 'INT',
+      'FLOAT': 'FLOAT',
+      'BOOL': 'BOOL'
+    };
+    return map[s] || 'STRING';
+  }
+
+  // ========= 新统一数据视图函数 =========
+  async function loadData() {
+    dataLoading = true;
+    dataError = '';
+    try {
+      // 尝试 count
+      let countSQL = `SELECT COUNT(*) AS cnt FROM ${selectedTable}`;
+      if (whereClause.trim()) countSQL += ` WHERE ${whereClause.trim()}`;
+      let total = null;
+      try {
+        const countResult = await executeQuery(countSQL);
+        if (countResult?.Rows?.[0]?.Values?.cnt !== undefined) {
+          total = Number(countResult.Rows[0].Values.cnt);
+        }
+      } catch (e) { /* ignore */ }
+      totalRows = total ?? 0;
+
+      // 数据查询
+      let sql = `SELECT * FROM ${selectedTable}`;
+      if (whereClause.trim()) sql += ` WHERE ${whereClause.trim()}`;
+      if (orderByClause.trim()) sql += ` ORDER BY ${orderByClause.trim()}`;
+      sql += ` LIMIT ${pageSize} OFFSET ${pageIndex * pageSize}`;
+
+      const data = await executeQuery(sql);
+      dataResult = data;
+    } catch (e) {
+      dataError = e.message;
+    } finally {
+      dataLoading = false;
+    }
+  }
+
+  function startEditDataRow(idx) {
+    if (!dataResult?.Columns || !dataResult?.Rows) return;
+    const row = dataResult.Rows[idx];
     editValues = {};
-    for (const col of editData.Columns) {
+    for (const col of dataResult.Columns) {
       editValues[col] = row.Values?.[col] ?? '';
     }
     editingRow = idx;
   }
 
-  function cancelEdit() {
+  function cancelEditDataRow() {
     editingRow = -1;
     editValues = {};
   }
 
-  async function saveRow(idx) {
-    if (!editData?.Columns || !editData?.Rows) return;
-    const row = editData.Rows[idx];
-    const pkCol = editData.Columns[0]; // 假设第一列为主键
+  async function saveEditDataRow(idx) {
+    if (!dataResult?.Columns || !dataResult?.Rows) return;
+    const row = dataResult.Rows[idx];
+    const pkCol = dataResult.Columns[0]; // first column as PK
     const pkVal = row.Values?.[pkCol];
 
     if (pkVal === undefined || pkVal === null) {
-      error = '无法确定主键值';
+      dataError = '无法确定主键值';
       return;
     }
 
-    const setClauses = editData.Columns
+    const setClauses = dataResult.Columns
       .filter(col => col !== pkCol)
       .map(col => {
         const v = editValues[col];
@@ -121,7 +253,7 @@
       .join(', ');
 
     if (!setClauses) {
-      cancelEdit();
+      cancelEditDataRow();
       return;
     }
 
@@ -131,26 +263,24 @@
     editSaving = true;
     try {
       await executeQuery(sql);
-      // 刷新数据
-      const data = await executeQuery(`SELECT * FROM ${selectedTable} LIMIT 200`);
-      editData = data;
+      await loadData();
       editingRow = -1;
       editValues = {};
     } catch (e) {
-      error = e.message;
+      dataError = e.message;
     } finally {
       editSaving = false;
     }
   }
 
-  async function deleteRow(idx) {
-    if (!editData?.Columns || !editData?.Rows) return;
-    const row = editData.Rows[idx];
-    const pkCol = editData.Columns[0];
+  async function deleteDataRow(idx) {
+    if (!dataResult?.Columns || !dataResult?.Rows) return;
+    const row = dataResult.Rows[idx];
+    const pkCol = dataResult.Columns[0];
     const pkVal = row.Values?.[pkCol];
 
     if (pkVal === undefined || pkVal === null) {
-      error = '无法确定主键值';
+      dataError = '无法确定主键值';
       return;
     }
 
@@ -159,12 +289,127 @@
 
     try {
       await executeQuery(sql);
-      const data = await executeQuery(`SELECT * FROM ${selectedTable} LIMIT 200`);
-      editData = data;
-      editingRow = -1;
-      editValues = {};
+      await loadData();
+    } catch (e) {
+      dataError = e.message;
+    }
+  }
+
+  function startInsertRow() {
+    insertingNew = true;
+    newRowValues = {};
+    if (dataResult?.Columns) {
+      for (const c of dataResult.Columns) newRowValues[c] = '';
+    }
+  }
+
+  function cancelInsertRow() {
+    insertingNew = false;
+    newRowValues = {};
+  }
+
+  async function saveInsertRow() {
+    if (!dataResult?.Columns) return;
+    const cols = dataResult.Columns;
+    const vals = cols.map(col => {
+      const v = newRowValues[col];
+      if (v === '' || v === null || v === undefined) return 'NULL';
+      if (typeof v === 'number' || !isNaN(Number(v))) return String(v);
+      return `'${String(v).replace(/'/g, "''")}'`;
+    }).join(', ');
+    const sql = `INSERT INTO ${selectedTable} (${cols.join(', ')}) VALUES (${vals})`;
+
+    try {
+      await executeQuery(sql);
+      await loadData();
+      insertingNew = false;
+      newRowValues = {};
+    } catch (e) {
+      dataError = e.message;
+    }
+  }
+
+  async function firstPage() {
+    pageIndex = 0;
+    await loadData();
+  }
+
+  async function prevPage() {
+    if (pageIndex > 0) {
+      pageIndex -= 1;
+      await loadData();
+    }
+  }
+
+  async function nextPage() {
+    if ((pageIndex + 1) * pageSize < (totalRows || Infinity)) {
+      pageIndex += 1;
+      await loadData();
+    }
+  }
+
+  // ========= 表结构编辑函数 =========
+  function markColDrop(idx, flag) {
+    schemaCols[idx].dropping = flag;
+  }
+
+  function buildColDef(col) {
+    let normType = col.type;
+    if (normType === 'INTEGER') normType = 'INT';
+    if (normType === 'BOOLEAN') normType = 'BOOL';
+    let def = `${col.name} ${normType}`;
+    if ((normType === 'VARCHAR') && col.length && col.length > 0) {
+      def = `${col.name} ${normType}(${col.length})`;
+    }
+    if (col.primaryKey) def += ' PRIMARY KEY';
+    else if (col.nullable === false) def += ' NOT NULL';
+    return def;
+  }
+
+  async function saveSchema() {
+    schemaSaving = true;
+    error = '';
+    try {
+      // 1) 先处理删除（反向遵照索引）
+      for (let i = schemaCols.length - 1; i >= 0; i--) {
+        const col = schemaCols[i];
+        const orig = schemaOriginal[i];
+        if (col.dropping && orig) {
+          await executeQuery(`ALTER TABLE ${selectedTable} DROP COLUMN ${orig.name}`);
+        }
+      }
+      // 2) 处理修改
+      for (let i = 0; i < schemaCols.length; i++) {
+        const col = schemaCols[i];
+        const orig = schemaOriginal[i];
+        if (col.dropping) continue;
+        if (!orig) continue; // 新增列在下一步处理
+        if (col.name !== orig.name ||
+            col.type !== orig.type ||
+            col.length !== orig.length ||
+            col.primaryKey !== orig.primaryKey ||
+            col.nullable !== orig.nullable) {
+          await executeQuery(`ALTER TABLE ${selectedTable} MODIFY COLUMN ${buildColDef(col)}`);
+        }
+      }
+      // 3) 新增
+      for (const col of schemaCols) {
+        if (col.isNew && !col.dropping) {
+          await executeQuery(`ALTER TABLE ${selectedTable} ADD COLUMN ${buildColDef(col)}`);
+        }
+      }
+      // Refresh
+      await loadTables();
+      try {
+        tableSchema = await executeQuery(`DESCRIBE ${selectedTable}`);
+      } catch (e) {
+        tableSchema = null;
+      }
+      currentView = 'list';
     } catch (e) {
       error = e.message;
+    } finally {
+      schemaSaving = false;
     }
   }
 
@@ -192,7 +437,10 @@
   async function createTable() {
     if (!createTableName.trim()) return;
     const cols = createColumns.map(c => {
-      let def = `${c.name} ${c.type}`;
+      let normType = c.type;
+      if (normType === 'INTEGER') normType = 'INT';
+      if (normType === 'BOOLEAN') normType = 'BOOL';
+      let def = `${c.name} ${normType}`;
       if (c.primaryKey) def += ' PRIMARY KEY';
       return def;
     }).join(', ');
@@ -244,10 +492,15 @@
       {:else}
         <div class="flex justify-between items-center mb-4">
           <h3 class="mono" style="font-size:16px; font-weight:600;">{selectedTable}</h3>
-          <button class="btn btn-sm btn-danger" onclick={() => showDropConfirm = true}>{i18n.t('common.delete')}</button>
+          <div class="detail-actions">
+            <button class="btn btn-sm" onclick={openSchemaEdit}>{i18n.t('tables.editSchema')}</button>
+            <button class="btn btn-sm" onclick={openIndexView}>{i18n.t('tables.indexes')}</button>
+            <button class="btn btn-sm btn-primary" onclick={openDataView}>{i18n.t('tables.data')}</button>
+            <button class="btn btn-sm btn-danger" onclick={() => showDropConfirm = true}>{i18n.t('common.delete')}</button>
+          </div>
         </div>
 
-        {#if tableSchema?.Rows?.length}
+        {#if tableSchema}
           <div class="card mb-4">
             <h4 class="card-title">{i18n.t('tables.structure')}</h4>
             <div class="table-container">
@@ -260,144 +513,326 @@
                   </tr>
                 </thead>
                 <tbody>
-                  {#each tableSchema.Rows as row}
+                  {#if tableSchema.Rows?.length > 0}
+                    {#each tableSchema.Rows as row}
+                      <tr>
+                        {#each tableSchema.Columns || [] as col}
+                          <td class="mono text-sm">{row.Values?.[col] ?? '-'}</td>
+                        {/each}
+                      </tr>
+                    {/each}
+                  {:else}
                     <tr>
-                      {#each tableSchema.Columns || [] as col}
-                        <td class="mono text-sm">{row.Values?.[col] ?? '-'}</td>
-                      {/each}
+                      <td class="text-muted text-center" colspan="{tableSchema.Columns?.length || 1}">暂无列定义</td>
                     </tr>
-                  {/each}
+                  {/if}
                 </tbody>
               </table>
             </div>
           </div>
         {/if}
 
-        <div class="card">
-          <div class="card-title-row">
-            <h4 class="card-title">{i18n.t('tables.actions')}</h4>
-          </div>
-          <div class="action-buttons">
-            <button class="btn btn-action" onclick={viewTableData} disabled={viewLoading}>
-              <span class="btn-icon-text">👁</span>
-              {viewLoading ? i18n.t('status.loading') : i18n.t('tables.viewData')}
-            </button>
-            <button class="btn btn-action" onclick={editTableData} disabled={editLoading}>
-              <span class="btn-icon-text">✏️</span>
-              {editLoading ? i18n.t('status.loading') : i18n.t('tables.editData')}
-            </button>
-          </div>
-        </div>
       {/if}
     </div>
   </div>
-{:else if currentView === 'view'}
-  <!-- 查看数据视图 -->
+{:else if currentView === 'indexes'}
+  <!-- 索引管理视图 -->
   <div class="view-header">
-    <button class="btn btn-sm" onclick={() => { currentView = 'list'; viewData = null; }}>
+    <button class="btn btn-sm" onclick={() => { currentView = 'list'; }}>
       ← {i18n.t('tables.backToList')}
     </button>
     <h3 class="mono" style="font-size:16px; font-weight:600;">
-      {i18n.t('tables.viewDataTitle')} <span class="text-muted text-sm">— {selectedTable}</span>
+      {i18n.t('tables.indexes')} <span class="text-muted text-sm">— {selectedTable}</span>
     </h3>
-    <span class="text-secondary text-sm">{i18n.t('common.total')} {viewData?.Rows?.length || 0} {i18n.t('common.units.rows')}</span>
   </div>
 
-  {#if viewLoading}
-    <div class="loading">{i18n.t('status.loading')}</div>
-  {:else if !viewData?.Rows?.length}
-    <div class="empty-state"><p>{i18n.t('tables.dataEmpty')}</p></div>
-  {:else}
-    <div class="card">
+  {#if error}
+    <div class="error-msg">{error}</div>
+  {/if}
+
+  <div class="card mb-4">
+    <h4 class="card-title">{i18n.t('tables.createIndex')}</h4>
+    <div class="index-form">
+      <input class="input" bind:value={newIndex.name} placeholder={i18n.t('tables.indexName')} style="flex:2;" />
+      <select class="input" bind:value={newIndex.column} style="flex:2;">
+        <option value="">{i18n.t('tables.indexColumn')}</option>
+        {#each tableSchema?.Rows || [] as row}
+          <option value={row.Values?.field}>{row.Values?.field}</option>
+        {/each}
+      </select>
+      <select class="input" bind:value={newIndex.type} style="flex:1;">
+        {#each indexTypes as t}
+          <option value={t}>{t}</option>
+        {/each}
+      </select>
+      <button
+        class="btn btn-sm btn-primary"
+        onclick={createIndex}
+        disabled={!newIndex.name.trim() || !newIndex.column}
+      >
+        + {i18n.t('tables.createIndex')}
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4 class="card-title">{i18n.t('tables.indexes')}</h4>
+    {#if indexLoading}
+      <div class="loading">{i18n.t('status.loading')}</div>
+    {:else if tableIndexes.length === 0}
+      <p class="text-muted text-sm">{i18n.t('tables.noIndexes')}</p>
+    {:else}
       <div class="table-container">
         <table>
           <thead>
             <tr>
-              {#each viewData.Columns || [] as col}
-                <th>{col}</th>
-              {/each}
+              <th>{i18n.t('tables.indexName')}</th>
+              <th>{i18n.t('tables.indexColumn')}</th>
+              <th>{i18n.t('tables.indexType')}</th>
+              <th style="width: 100px;">{i18n.t('tables.operation')}</th>
             </tr>
           </thead>
           <tbody>
-            {#each viewData.Rows as row}
+            {#each tableIndexes as idx}
               <tr>
-                {#each viewData.Columns || [] as col}
-                  <td class="mono text-sm">{formatCell(row.Values?.[col])}</td>
-                {/each}
+                <td class="mono text-sm">{idx.Values?.name}</td>
+                <td class="mono text-sm">{idx.Values?.column}</td>
+                <td><span class="badge badge-info">{idx.Values?.type}</span></td>
+                <td>
+                  <button class="btn btn-xs btn-danger" onclick={() => dropIndex(idx.Values?.name)}>
+                    {i18n.t('tables.dropIndex')}
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
         </table>
       </div>
-    </div>
-  {/if}
-{:else if currentView === 'edit'}
-  <!-- 编辑数据视图 -->
+    {/if}
+  </div>
+{:else if currentView === 'data'}
+  <!-- 统一数据视图 -->
   <div class="view-header">
-    <button class="btn btn-sm" onclick={() => { currentView = 'list'; editData = null; editingRow = -1; }}>
+    <button class="btn btn-sm" onclick={() => { currentView = 'list'; dataResult = null; editingRow = -1; }}>
       ← {i18n.t('tables.backToList')}
     </button>
     <h3 class="mono" style="font-size:16px; font-weight:600;">
-      {i18n.t('tables.editDataTitle')} <span class="text-muted text-sm">— {selectedTable}</span>
+      {i18n.t('tables.data')} <span class="text-muted text-sm">— {selectedTable}</span>
     </h3>
-    <span class="text-secondary text-sm">{i18n.t('common.total')} {editData?.Rows?.length || 0} {i18n.t('common.units.rows')}</span>
+    <div class="data-header-meta">
+      {#if totalRows > 0}
+        <span class="text-secondary text-sm">{i18n.t('common.total')} {totalRows} {i18n.t('common.units.rows')}</span>
+      {/if}
+      <span class="text-secondary text-sm">第 {pageIndex + 1} 页</span>
+    </div>
   </div>
 
-  {#if editLoading}
+  {#if dataError}
+    <div class="error-msg">{dataError}</div>
+  {/if}
+
+  <!-- 查询条件 -->
+  <div class="data-filter card mb-4">
+    <div class="filter-row">
+      <label class="filter-label">{i18n.t('tables.where')}</label>
+      <input class="input flex-1" bind:value={whereClause} placeholder="例如: id > 100" />
+    </div>
+    <div class="filter-row">
+      <label class="filter-label">{i18n.t('tables.order')}</label>
+      <input class="input flex-1" bind:value={orderByClause} placeholder="例如: created_at DESC" />
+    </div>
+    <div class="filter-row">
+      <label class="filter-label">{i18n.t('tables.pageSize')}</label>
+      <select class="input" style="width: 120px;" bind:value={pageSize}>
+        <option value={20}>20</option>
+        <option value={50}>50</option>
+        <option value={100}>100</option>
+      </select>
+      <button class="btn btn-sm btn-primary ml-2" onclick={loadData}>{i18n.t('common.refresh')}</button>
+    </div>
+  </div>
+
+  {#if dataLoading}
     <div class="loading">{i18n.t('status.loading')}</div>
-  {:else if !editData?.Rows?.length}
-    <div class="empty-state"><p>{i18n.t('tables.dataEmpty')}</p></div>
   {:else}
-    <div class="card">
-      <div class="table-container">
-        <table>
-          <thead>
-            <tr>
-              {#each editData.Columns || [] as col}
-                <th>{col}</th>
-              {/each}
-              <th style="width:120px;">{i18n.t('tables.operation')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each editData.Rows as row, idx}
-              {#if editingRow === idx}
-                <!-- 编辑行 -->
+    <div class="data-actions mb-2">
+      <button class="btn btn-sm btn-primary" onclick={startInsertRow} disabled={insertingNew}>
+        + {i18n.t('tables.insertRow')}
+      </button>
+    </div>
+
+    {#if !dataResult?.Rows?.length && !insertingNew}
+      <div class="empty-state"><p>{i18n.t('tables.dataEmpty')}</p></div>
+    {:else}
+      <div class="card">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                {#each dataResult?.Columns || [] as col}
+                  <th>{col}</th>
+                {/each}
+                <th style="width: 140px;">{i18n.t('tables.operation')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#if insertingNew}
                 <tr class="editing-row">
-                  {#each editData.Columns || [] as col}
+                  {#each dataResult?.Columns || [] as col}
                     <td class="mono text-sm">
-                      <input
-                        class="cell-input"
-                        bind:value={editValues[col]}
-                        onkeydown={(e) => { if (e.key === 'Enter') saveRow(idx); if (e.key === 'Escape') cancelEdit(); }}
-                      />
+                      <input class="cell-input" bind:value={newRowValues[col]} />
                     </td>
                   {/each}
                   <td class="row-actions">
-                    <button class="btn btn-xs btn-primary" onclick={() => saveRow(idx)} disabled={editSaving}>
-                      {editSaving ? '...' : i18n.t('common.confirm')}
+                    <button class="btn btn-xs btn-primary" onclick={saveInsertRow}>
+                      {i18n.t('tables.saveNewRow')}
                     </button>
-                    <button class="btn btn-xs" onclick={cancelEdit}>{i18n.t('common.cancel')}</button>
-                  </td>
-                </tr>
-              {:else}
-                <!-- 普通行 -->
-                <tr>
-                  {#each editData.Columns || [] as col}
-                    <td class="mono text-sm">{formatCell(row.Values?.[col])}</td>
-                  {/each}
-                  <td class="row-actions">
-                    <button class="btn btn-xs" onclick={() => startEditRow(idx)}>{i18n.t('tables.edit')}</button>
-                    <button class="btn btn-xs btn-danger" onclick={() => deleteRow(idx)}>{i18n.t('common.delete')}</button>
+                    <button class="btn btn-xs" onclick={cancelInsertRow}>
+                      {i18n.t('tables.cancelInsert')}
+                    </button>
                   </td>
                 </tr>
               {/if}
-            {/each}
-          </tbody>
-        </table>
+
+              {#each dataResult?.Rows || [] as row, idx}
+                {#if editingRow === idx}
+                  <!-- 编辑行 -->
+                  <tr class="editing-row">
+                    {#each dataResult.Columns || [] as col}
+                      <td class="mono text-sm">
+                        <input class="cell-input" bind:value={editValues[col]} />
+                      </td>
+                    {/each}
+                    <td class="row-actions">
+                      <button class="btn btn-xs btn-primary" onclick={() => saveEditDataRow(idx)} disabled={editSaving}>
+                        {editSaving ? '...' : i18n.t('common.confirm')}
+                      </button>
+                      <button class="btn btn-xs" onclick={cancelEditDataRow}>{i18n.t('common.cancel')}</button>
+                    </td>
+                  </tr>
+                {:else}
+                  <!-- 普通行 -->
+                  <tr>
+                    {#each dataResult.Columns || [] as col}
+                      <td class="mono text-sm">{@render formatCell(row.Values?.[col])}</td>
+                    {/each}
+                    <td class="row-actions">
+                      <button class="btn btn-xs" onclick={() => startEditDataRow(idx)}>{i18n.t('tables.edit')}</button>
+                      <button class="btn btn-xs btn-danger" onclick={() => deleteDataRow(idx)}>{i18n.t('common.delete')}</button>
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+
+      <!-- 分页 -->
+      <div class="pagination">
+        <button class="btn btn-sm" onclick={prevPage} disabled={pageIndex <= 0}>{i18n.t('tables.prevPage')}</button>
+        <span class="text-secondary text-sm">第 {pageIndex + 1} 页</span>
+        <button class="btn btn-sm" onclick={nextPage} disabled={(pageIndex + 1) * pageSize >= (totalRows || Infinity)}>{i18n.t('tables.nextPage')}</button>
+      </div>
+    {/if}
   {/if}
+{:else if currentView === 'schema'}
+  <!-- 表结构编辑视图 -->
+  <div class="view-header">
+    <button class="btn btn-sm" onclick={() => { currentView = 'list'; schemaCols = []; }}>
+      ← {i18n.t('tables.backToList')}
+    </button>
+    <h3 class="mono" style="font-size:16px; font-weight:600;">
+      {i18n.t('tables.schemaEditTitle')} <span class="text-muted text-sm">— {selectedTable}</span>
+    </h3>
+    <button class="btn btn-sm btn-primary" onclick={saveSchema} disabled={schemaSaving}>
+      {schemaSaving ? '...' : i18n.t('tables.saveSchema')}
+    </button>
+  </div>
+
+  <div class="card">
+    <h4 class="card-title">现有列</h4>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>列名</th>
+            <th>类型</th>
+            <th>主键</th>
+            <th style="width: 100px;">{i18n.t('tables.operation')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each schemaCols as col, idx}
+            {#if schemaOriginal[idx] || col.isNew}
+              <tr class={col.isNew ? 'editing-row' : ''}>
+                <td>
+                  <input class="input" bind:value={col.name} style="width: 180px;" />
+                </td>
+                <td>
+                  <select class="input" style="width: 140px;" bind:value={col.type}>
+                    <option value="INT">INT</option>
+                    <option value="INTEGER">INTEGER</option>
+                    <option value="VARCHAR">VARCHAR</option>
+                    <option value="TEXT">TEXT</option>
+                    <option value="STRING">STRING</option>
+                    <option value="FLOAT">FLOAT</option>
+                    <option value="BOOL">BOOL</option>
+                    <option value="BOOLEAN">BOOLEAN</option>
+                  </select>
+                </td>
+                <td style="text-align:center;">
+                  <input type="checkbox" bind:checked={col.primaryKey} />
+                </td>
+                <td>
+                  {#if col.isNew}
+                    <button class="btn btn-xs btn-danger" onclick={() => { schemaCols = schemaCols.filter((_, i) => i !== idx); }}>移除</button>
+                  {:else if !col.primaryKey}
+                    <button class="btn btn-xs btn-danger" onclick={() => markColDrop(idx, true)} disabled={col.dropping}>
+                      {col.dropping ? '标记删除' : i18n.t('tables.dropCol')}
+                    </button>
+                    {#if col.dropping}
+                      <button class="btn btn-xs" onclick={() => markColDrop(idx, false)}>撤销</button>
+                    {/if}
+                  {/if}
+                </td>
+              </tr>
+            {/if}
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card mt-4">
+    <h4 class="card-title">添加新列</h4>
+    <div class="column-row">
+      <input class="input" bind:value={schemaAddCol.name} placeholder="列名" style="flex:2;" />
+      <select class="input" bind:value={schemaAddCol.type} style="flex:1;">
+        <option value="STRING">STRING</option>
+        <option value="INT">INT</option>
+        <option value="INTEGER">INTEGER</option>
+        <option value="VARCHAR">VARCHAR</option>
+        <option value="TEXT">TEXT</option>
+        <option value="FLOAT">FLOAT</option>
+        <option value="BOOL">BOOL</option>
+        <option value="BOOLEAN">BOOLEAN</option>
+      </select>
+      <label class="flex items-center gap-2 text-sm" style="white-space:nowrap;">
+        <input type="checkbox" bind:checked={schemaAddCol.primaryKey} /> {i18n.t('tables.primaryKey')}
+      </label>
+      <button class="btn btn-sm btn-primary" onclick={() => {
+        if (schemaAddCol.name.trim()) {
+          // Normalize type
+          let normType = schemaAddCol.type;
+          if (normType === 'INTEGER') normType = 'INT';
+          if (normType === 'BOOLEAN') normType = 'BOOL';
+          schemaCols = [...schemaCols, { ...schemaAddCol, name: schemaAddCol.name.trim(), type: normType, dropping: false, isNew: true }];
+          schemaAddCol = { name: '', type: 'STRING', primaryKey: false };
+        }
+      }} disabled={!schemaAddCol.name.trim()}>+ {i18n.t('tables.addCol')}</button>
+    </div>
+  </div>
 {/if}
 
 {#if showCreateModal}
@@ -416,9 +851,12 @@
             <select class="input" bind:value={col.type} style="flex:1">
               <option value="STRING">STRING</option>
               <option value="INT">INT</option>
+              <option value="INTEGER">INTEGER</option>
+              <option value="VARCHAR">VARCHAR</option>
+              <option value="TEXT">TEXT</option>
               <option value="FLOAT">FLOAT</option>
               <option value="BOOL">BOOL</option>
-              <option value="TEXT">TEXT</option>
+              <option value="BOOLEAN">BOOLEAN</option>
             </select>
             <label class="flex items-center gap-2 text-sm" style="white-space:nowrap">
               <input type="checkbox" bind:checked={col.primaryKey} /> {i18n.t('tables.primaryKey')}
@@ -466,6 +904,12 @@
     display: flex;
     gap: 16px;
     height: calc(100vh - var(--header-height) - 48px - 56px);
+  }
+  .index-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
   }
   .table-sidebar {
     width: 200px;
@@ -578,5 +1022,40 @@
   .btn-xs {
     padding: 2px 8px;
     font-size: 11px;
+  }
+  .detail-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .data-filter {
+    padding: 16px;
+  }
+  .filter-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .filter-row:last-child {
+    margin-bottom: 0;
+  }
+  .filter-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    min-width: 110px;
+  }
+  .data-header-meta {
+    display: flex;
+    gap: 16px;
+  }
+  .data-actions {
+    display: flex;
+    align-items: center;
+  }
+  .pagination {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
   }
 </style>

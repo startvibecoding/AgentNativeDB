@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/startvibecoding/AgentNativeDB/api/mcp"
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
 	"github.com/startvibecoding/AgentNativeDB/internal/model"
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
+	"github.com/startvibecoding/AgentNativeDB/internal/vector"
 	uistatic "github.com/startvibecoding/AgentNativeDB/ui/static"
 )
 
@@ -25,10 +27,12 @@ type Router struct {
 	memory   *agent.MemoryStore
 	decision *agent.DecisionRecorder
 	executor *sql.Executor
+	vectors  *vector.VectorStore
+	mcp      *mcp.MCPServer
 }
 
 // NewRouter 创建路由器
-func NewRouter(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder, executor *sql.Executor) *Router {
+func NewRouter(engine storage.Engine, session *agent.SessionManager, memory *agent.MemoryStore, decision *agent.DecisionRecorder, executor *sql.Executor, vectors *vector.VectorStore) *Router {
 	r := &Router{
 		mux:      http.NewServeMux(),
 		engine:   engine,
@@ -36,6 +40,8 @@ func NewRouter(engine storage.Engine, session *agent.SessionManager, memory *age
 		memory:   memory,
 		decision: decision,
 		executor: executor,
+		vectors:  vectors,
+		mcp:      mcp.NewMCPServer(engine, session, memory, decision, executor),
 	}
 	r.registerRoutes()
 	return r
@@ -77,8 +83,19 @@ func (r *Router) registerRoutes() {
 	// SQL 查询
 	r.mux.HandleFunc("POST /api/v1/query", r.handleQuery)
 
+	// Vector
+	r.mux.HandleFunc("GET /api/v1/vector/indexes", r.handleListVectorIndexes)
+	r.mux.HandleFunc("POST /api/v1/vector/indexes", r.handleCreateVectorIndex)
+	r.mux.HandleFunc("GET /api/v1/vector/indexes/{name}", r.handleGetVectorIndex)
+	r.mux.HandleFunc("POST /api/v1/vector/indexes/{name}/vectors", r.handleInsertVector)
+	r.mux.HandleFunc("DELETE /api/v1/vector/indexes/{name}/vectors/{id}", r.handleDeleteVector)
+	r.mux.HandleFunc("POST /api/v1/vector/indexes/{name}/search", r.handleSearchVector)
+
 	// Health
 	r.mux.HandleFunc("GET /health", r.handleHealth)
+
+	// MCP over HTTP (JSON-RPC 单次请求/响应)
+	r.mux.Handle("POST /mcp", r.mcp)
 
 	// 静态文件服务 (Web UI)
 	r.mux.HandleFunc("/", r.handleStatic)

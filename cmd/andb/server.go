@@ -19,6 +19,7 @@ import (
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
 	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	"github.com/startvibecoding/AgentNativeDB/internal/vector"
 )
 
 func runServer(args []string) {
@@ -72,6 +73,7 @@ func runServer(args []string) {
 	sessionMgr := agent.NewSessionManager(engine, cache)
 	memoryStore := agent.NewMemoryStore(engine, cache)
 	decisionRecorder := agent.NewDecisionRecorder(engine, cache)
+	vectorStore := vector.NewVectorStore(engine)
 
 	executor := sql.NewExecutor(engine)
 	if err := executor.Init(context.Background()); err != nil {
@@ -87,7 +89,7 @@ func runServer(args []string) {
 		return
 	}
 
-	router := apihttp.NewRouter(engine, sessionMgr, memoryStore, decisionRecorder, executor)
+	router := apihttp.NewRouter(engine, sessionMgr, memoryStore, decisionRecorder, executor, vectorStore)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),

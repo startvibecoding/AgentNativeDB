@@ -4,17 +4,33 @@
   let page = $state('dashboard');
   currentPage.subscribe(v => page = v);
 
+  // 展开的分组 (默认展开)
+  let expanded = $state({ 'ai-native': true });
+
   const navItems = $derived([
     { id: 'dashboard', label: i18n.t('nav.dashboard'), icon: '◆' },
     { id: 'tables', label: i18n.t('nav.tables'), icon: '☰' },
     { id: 'sql', label: i18n.t('nav.sql'), icon: '▸' },
-    { id: 'sessions', label: i18n.t('nav.sessions'), icon: '◎' },
-    { id: 'memories', label: i18n.t('nav.memories'), icon: '◉' },
-    { id: 'decisions', label: i18n.t('nav.decisions'), icon: '◈' },
+    { id: 'vectors', label: i18n.t('nav.vectors'), icon: '↯' },
+    {
+      id: 'ai-native',
+      label: i18n.t('nav.aiNative'),
+      icon: '✦',
+      children: [
+        { id: 'ai-dashboard', label: i18n.t('nav.aiDashboard'), icon: '▣' },
+        { id: 'sessions', label: i18n.t('nav.sessions'), icon: '◎' },
+        { id: 'memories', label: i18n.t('nav.memories'), icon: '◉' },
+        { id: 'decisions', label: i18n.t('nav.decisions'), icon: '◈' },
+      ],
+    },
   ]);
 
   function navigate(id) {
     currentPage.set(id);
+  }
+
+  function toggleGroup(id) {
+    expanded[id] = !expanded[id];
   }
 </script>
 
@@ -39,14 +55,39 @@
 
   <nav class="sidebar-nav">
     {#each navItems as item}
-      <button
-        class="nav-item"
-        class:active={page === item.id}
-        onclick={() => navigate(item.id)}
-      >
-        <span class="nav-icon">{item.icon}</span>
-        <span class="nav-label">{item.label}</span>
-      </button>
+      {#if item.children}
+        <button
+          class="nav-item nav-group"
+          onclick={() => toggleGroup(item.id)}
+        >
+          <span class="nav-icon">{item.icon}</span>
+          <span class="nav-label">{item.label}</span>
+          <span class="nav-caret" class:open={expanded[item.id]}>›</span>
+        </button>
+        {#if expanded[item.id]}
+          <div class="nav-children">
+            {#each item.children as child}
+              <button
+                class="nav-item nav-child"
+                class:active={page === child.id}
+                onclick={() => navigate(child.id)}
+              >
+                <span class="nav-icon">{child.icon}</span>
+                <span class="nav-label">{child.label}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      {:else}
+        <button
+          class="nav-item"
+          class:active={page === item.id}
+          onclick={() => navigate(item.id)}
+        >
+          <span class="nav-icon">{item.icon}</span>
+          <span class="nav-label">{item.label}</span>
+        </button>
+      {/if}
     {/each}
   </nav>
 
@@ -132,6 +173,26 @@
   }
   .nav-label {
     white-space: nowrap;
+    flex: 1;
+  }
+  .nav-caret {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+  .nav-caret.open {
+    transform: rotate(90deg);
+  }
+  .nav-children {
+    margin-left: 12px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+  .nav-child {
+    padding-left: 10px;
+    font-size: 12.5px;
   }
   .sidebar-footer {
     padding: 12px 16px;

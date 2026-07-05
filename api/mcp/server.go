@@ -2,11 +2,13 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
@@ -66,6 +68,43 @@ func (s *MCPServer) Run(ctx context.Context) error {
 	}
 
 	return scanner.Err()
+}
+
+// ServeHTTP 提供 HTTP 传输的 MCP JSON-RPC 端点。
+// 每个 HTTP 请求携带一个 JSON-RPC 请求，返回对应响应。
+// 使用 s 的副本隔离每次请求的写入缓冲，保证并发安全。
+func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var buf bytes.Buffer
+	clone := *s
+	clone.writer = &buf
+
+	var req JSONRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		clone.sendError(nil, -32700, "parse error", err.Error())
+	} else {
+		clone.handleRequest(r.Context(), &req)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if buf.Len() == 0 {
+		// 无响应（例如通知），返回 204
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Write(buf.Bytes()) //nolint:errcheck
 }
 
 // handleRequest 处理 MCP 请求
