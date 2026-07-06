@@ -27,9 +27,9 @@ type ColumnMeta struct {
 
 // TableManager 表管理器
 type TableManager struct {
-	engine  Engine
-	mu      sync.RWMutex
-	tables  map[string]*TableMetadata
+	engine     Engine
+	mu         sync.RWMutex
+	tables     map[string]*TableMetadata
 	nextPrefix byte
 }
 
@@ -37,6 +37,7 @@ type TableManager struct {
 const (
 	tableMetaKeyPrefix   = "table:"
 	userTablePrefixStart = 0x30 // 用户表存储前缀起始（避免与内置表冲突）
+	userTablePrefixEnd   = 0xFE // 0xFF 保留给系统元数据
 )
 
 // NewTableManager 创建表管理器
@@ -72,7 +73,7 @@ func (tm *TableManager) Init(ctx context.Context) error {
 			continue
 		}
 		tm.tables[meta.Name] = &meta
-		if meta.Prefix >= tm.nextPrefix {
+		if meta.Prefix >= tm.nextPrefix && meta.Prefix <= userTablePrefixEnd {
 			tm.nextPrefix = meta.Prefix + 1
 		}
 	}
@@ -94,8 +95,9 @@ func (tm *TableManager) registerBuiltinTables() {
 				{Name: "agent_id", Type: "VARCHAR", Length: 64, Nullable: false},
 				{Name: "created_at", Type: "VARCHAR", Length: 32, Nullable: false},
 				{Name: "updated_at", Type: "VARCHAR", Length: 32, Nullable: false},
-				{Name: "status", Type: "VARCHAR", Length: 16, Nullable: false},
+				{Name: "state", Type: "VARCHAR", Length: 16, Nullable: false},
 				{Name: "context", Type: "TEXT", Nullable: true},
+				{Name: "metadata", Type: "TEXT", Nullable: true},
 			},
 		},
 		{
@@ -103,12 +105,14 @@ func (tm *TableManager) registerBuiltinTables() {
 			Prefix: PrefixMemory,
 			Columns: []ColumnMeta{
 				{Name: "id", Type: "VARCHAR", Length: 64, Nullable: false, PrimaryKey: true},
-				{Name: "agent_id", Type: "VARCHAR", Length: 64, Nullable: false},
 				{Name: "session_id", Type: "VARCHAR", Length: 64, Nullable: true},
 				{Name: "type", Type: "VARCHAR", Length: 32, Nullable: false},
 				{Name: "content", Type: "TEXT", Nullable: false},
 				{Name: "importance", Type: "FLOAT", Nullable: false},
+				{Name: "access_count", Type: "INT", Nullable: false},
+				{Name: "associations", Type: "TEXT", Nullable: true},
 				{Name: "created_at", Type: "VARCHAR", Length: 32, Nullable: false},
+				{Name: "accessed_at", Type: "VARCHAR", Length: 32, Nullable: false},
 			},
 		},
 		{
@@ -116,12 +120,15 @@ func (tm *TableManager) registerBuiltinTables() {
 			Prefix: PrefixDecision,
 			Columns: []ColumnMeta{
 				{Name: "id", Type: "VARCHAR", Length: 64, Nullable: false, PrimaryKey: true},
-				{Name: "agent_id", Type: "VARCHAR", Length: 64, Nullable: false},
 				{Name: "session_id", Type: "VARCHAR", Length: 64, Nullable: true},
-				{Name: "decision_type", Type: "VARCHAR", Length: 32, Nullable: false},
+				{Name: "parent_id", Type: "VARCHAR", Length: 64, Nullable: true},
+				{Name: "type", Type: "VARCHAR", Length: 32, Nullable: false},
+				{Name: "input", Type: "TEXT", Nullable: true},
+				{Name: "output", Type: "TEXT", Nullable: true},
 				{Name: "reasoning", Type: "TEXT", Nullable: true},
-				{Name: "action", Type: "TEXT", Nullable: false},
-				{Name: "result", Type: "TEXT", Nullable: true},
+				{Name: "tools_used", Type: "TEXT", Nullable: true},
+				{Name: "duration_ms", Type: "INT", Nullable: false},
+				{Name: "token_usage", Type: "TEXT", Nullable: true},
 				{Name: "created_at", Type: "VARCHAR", Length: 32, Nullable: false},
 			},
 		},
@@ -188,6 +195,9 @@ func (tm *TableManager) CreateTable(ctx context.Context, name string, columns []
 	}
 
 	// 分配前缀
+	if tm.nextPrefix > userTablePrefixEnd {
+		return fmt.Errorf("no table prefix available")
+	}
 	prefix := tm.nextPrefix
 	tm.nextPrefix++
 

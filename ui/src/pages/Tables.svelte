@@ -43,7 +43,11 @@
   let tableIndexes = $state([]);
   let indexLoading = $state(false);
   let newIndex = $state({ name: '', column: '', type: 'BTREE' });
-  const indexTypes = ['HASH', 'BTREE', 'INVERTED'];
+  const indexTypes = [
+    { value: 'HASH', label: 'HASH' },
+    { value: 'BTREE', label: 'BTREE' },
+    { value: 'FULLTEXT', label: i18n.t('tables.fulltextIndex') }
+  ];
 
   onMount(loadTables);
 
@@ -598,7 +602,7 @@
       </select>
       <select class="input" bind:value={newIndex.type} style="flex:1;">
         {#each indexTypes as t}
-          <option value={t}>{t}</option>
+          <option value={t.value}>{t.label}</option>
         {/each}
       </select>
       <button
@@ -633,7 +637,11 @@
               <tr>
                 <td class="mono text-sm">{idx.Values?.name}</td>
                 <td class="mono text-sm">{idx.Values?.column}</td>
-                <td><span class="badge badge-info">{idx.Values?.type}</span></td>
+                <td>
+                  <span class="badge badge-info">
+                    {idx.Values?.type === 'INVERTED' ? i18n.t('tables.fulltextIndex') : idx.Values?.type}
+                  </span>
+                </td>
                 <td>
                   <button class="btn btn-xs btn-danger" onclick={() => dropIndex(idx.Values?.name)}>
                     {i18n.t('tables.dropIndex')}

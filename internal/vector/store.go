@@ -13,9 +13,9 @@ import (
 
 // VectorStore 向量存储（基于 BadgerDB + HNSW 索引）
 type VectorStore struct {
-	engine storage.Engine
+	engine  storage.Engine
 	indexes map[string]*HNSWIndex // indexName -> HNSW index
-	dims    map[string]int         // indexName -> dimension
+	dims    map[string]int        // indexName -> dimension
 }
 
 // NewVectorStore 创建向量存储
@@ -62,6 +62,9 @@ func (vs *VectorStore) InsertWithPayload(indexName, id string, vector []float32,
 	if !ok {
 		return fmt.Errorf("index %s not found", indexName)
 	}
+	if dim := vs.dims[indexName]; len(vector) != dim {
+		return fmt.Errorf("vector dimension mismatch: expected %d, got %d", dim, len(vector))
+	}
 
 	// 持久化向量到 BadgerDB
 	vecKey := EncodeVectorKey(indexName, id)
@@ -95,6 +98,9 @@ func (vs *VectorStore) Search(indexName string, query []float32, topK int) ([]Se
 	if !ok {
 		return nil, fmt.Errorf("index %s not found", indexName)
 	}
+	if dim := vs.dims[indexName]; len(query) != dim {
+		return nil, fmt.Errorf("query dimension mismatch: expected %d, got %d", dim, len(query))
+	}
 
 	results := idx.Search(query, topK)
 	return results, nil
@@ -109,7 +115,14 @@ func (vs *VectorStore) Delete(indexName, id string) error {
 
 	// 从存储中删除
 	vecKey := EncodeVectorKey(indexName, id)
-	vs.engine.Delete(context.Background(), vecKey)
+	payloadKey := storage.EncodeVectorPayloadKey(indexName, id)
+	ops := []storage.WriteOp{
+		{Type: storage.OpDelete, Key: vecKey},
+		{Type: storage.OpDelete, Key: payloadKey},
+	}
+	if err := vs.engine.BatchWrite(context.Background(), ops); err != nil {
+		return fmt.Errorf("delete vector: %w", err)
+	}
 
 	// 从 HNSW 中删除
 	idx.Delete(id)

@@ -7,7 +7,7 @@
 ## 特性
 
 - **Agent 原生数据管理** — 会话、记忆、决策作为一等公民
-- **SQL 查询引擎** — 支持 SELECT/INSERT/UPDATE/DELETE、WHERE、ORDER BY、LIMIT、GROUP BY、聚合函数、JOIN
+- **SQL 查询引擎** — 支持 SELECT/INSERT/UPDATE/DELETE、WHERE、ORDER BY、LIMIT、GROUP BY、聚合函数、JOIN、全文搜索
 - **向量索引** — 自研 HNSW 实现，支持余弦/L2/点积距离
 - **知识图谱** — 邻接表存储，BFS/K跳/最短路径查询
 - **MCP Server** — 兼容 Model Context Protocol，可与 Cursor/Claude Desktop 集成
@@ -65,6 +65,11 @@ WHERE m.importance > 0.7;
 
 -- 排序分页
 SELECT * FROM agent_memories ORDER BY importance DESC LIMIT 10;
+
+-- 全文搜索索引（FULLTEXT 是倒排索引 INVERTED 的语法别名）
+CREATE TABLE docs (id VARCHAR(64) PRIMARY KEY, body TEXT);
+CREATE FULLTEXT INDEX idx_docs_body ON docs(body);
+SELECT * FROM docs WHERE MATCH(body) AGAINST ('agent memory');
 ```
 
 ## API 端点

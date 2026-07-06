@@ -138,6 +138,49 @@ func TestIndex_Inverted_Match(t *testing.T) {
 	}
 }
 
+func TestIndex_FullTextAlias_Match(t *testing.T) {
+	e := setupIndexExecutor(t)
+
+	runSQL(t, e, "CREATE TABLE docs (id VARCHAR(64) PRIMARY KEY, body TEXT)")
+	runSQL(t, e, "CREATE FULLTEXT INDEX idx_docs_body ON docs(body)")
+
+	shown := runSQL(t, e, "SHOW INDEXES FROM docs")
+	if len(shown.Rows) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(shown.Rows))
+	}
+	if got := shown.Rows[0].Values["type"]; got != "INVERTED" {
+		t.Fatalf("expected FULLTEXT alias to be stored as INVERTED, got %v", got)
+	}
+
+	runSQL(t, e, "INSERT INTO docs (id, body) VALUES ('d1', 'Agent native full text search')")
+	runSQL(t, e, "INSERT INTO docs (id, body) VALUES ('d2', 'Vector search')")
+
+	stmt, _ := Parse("SELECT * FROM docs WHERE MATCH(body) AGAINST ('full text')")
+	plan, _ := e.Planner().Plan(stmt)
+	if !containsIndexScan(plan) {
+		t.Fatalf("expected IndexScan in plan, got %s", plan)
+	}
+	res := runSQL(t, e, "SELECT * FROM docs WHERE MATCH(body) AGAINST ('full text')")
+	if len(res.Rows) != 1 {
+		t.Errorf("expected 1 row matching full text, got %d", len(res.Rows))
+	}
+}
+
+func TestIndex_UsingFullTextAlias_Match(t *testing.T) {
+	e := setupIndexExecutor(t)
+
+	runSQL(t, e, "CREATE TABLE docs (id VARCHAR(64) PRIMARY KEY, body TEXT)")
+	runSQL(t, e, "CREATE INDEX idx_docs_body ON docs(body) USING FULLTEXT")
+
+	runSQL(t, e, "INSERT INTO docs (id, body) VALUES ('d1', '数据库 支持 全文 搜索')")
+	runSQL(t, e, "INSERT INTO docs (id, body) VALUES ('d2', '向量 检索')")
+
+	res := runSQL(t, e, "SELECT * FROM docs WHERE MATCH(body) AGAINST ('全文 搜索')")
+	if len(res.Rows) != 1 {
+		t.Errorf("expected 1 row matching 全文 搜索, got %d", len(res.Rows))
+	}
+}
+
 func TestIndex_UpdateDeleteMaintain(t *testing.T) {
 	e := setupIndexExecutor(t)
 

@@ -13,6 +13,7 @@ import (
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
 	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	"github.com/startvibecoding/AgentNativeDB/internal/vector"
 )
 
 func setupTestServer(t *testing.T) (*Router, *httptest.Server) {
@@ -38,7 +39,7 @@ func setupTestServer(t *testing.T) (*Router, *httptest.Server) {
 	if err := executor.Init(context.Background()); err != nil {
 		t.Fatalf("init executor: %v", err)
 	}
-	router := NewRouter(engine, session, memory, decision, executor, nil)
+	router := NewRouter(engine, session, memory, decision, executor, vector.NewVectorStore(engine))
 
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
@@ -211,6 +212,47 @@ func TestAPI_SQLQuery(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&r)
 	if !r.OK {
 		t.Fatalf("expected ok, got error: %s", r.Error)
+	}
+}
+
+func TestAPI_VectorSearchWithPayloadFlag(t *testing.T) {
+	_, server := setupTestServer(t)
+
+	resp, err := http.Post(server.URL+"/api/v1/vector/indexes", "application/json", bytes.NewBufferString(`{"name":"test","dim":3}`))
+	if err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	resp, err = http.Post(server.URL+"/api/v1/vector/indexes/test/vectors", "application/json", bytes.NewBufferString(`{"id":"vec-001","vector":[1,0,0],"payload":{"secret":"hidden"}}`))
+	if err != nil {
+		t.Fatalf("insert vector: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	resp, err = http.Post(server.URL+"/api/v1/vector/indexes/test/search", "application/json", bytes.NewBufferString(`{"vector":[1,0,0],"top_k":1,"with_payload":false}`))
+	if err != nil {
+		t.Fatalf("search vector: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result apiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows := result.Data.([]any)
+	first := rows[0].(map[string]any)
+	if _, ok := first["payload"]; ok {
+		t.Fatalf("expected payload omitted, got %v", first["payload"])
 	}
 }
 

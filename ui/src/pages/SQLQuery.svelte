@@ -17,6 +17,7 @@
     { label: i18n.t('sql.presets.decisions'), sql: 'SELECT * FROM decisions LIMIT 20' },
     { label: i18n.t('sql.presets.countSessions'), sql: 'SELECT COUNT(*) as total FROM sessions' },
     { label: i18n.t('sql.presets.countMemories'), sql: 'SELECT type, COUNT(*) as cnt FROM memories GROUP BY type' },
+    { label: i18n.t('sql.presets.fulltext'), sql: "SELECT * FROM docs WHERE MATCH(body) AGAINST ('agent')" },
   ]);
 
   async function runQuery() {

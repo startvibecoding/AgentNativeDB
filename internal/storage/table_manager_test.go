@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 
@@ -84,6 +85,36 @@ func TestTableManager_BuiltinTablePrefixes(t *testing.T) {
 	if !ok || prefix != storage.PrefixDecision {
 		t.Fatalf("agent_decisions: expected prefix %d, got %d", storage.PrefixDecision, prefix)
 	}
+}
+
+func TestTableManager_BuiltinTableColumnsMatchJSON(t *testing.T) {
+	env := newTableManagerTestEnv(t)
+
+	assertColumns := func(table string, want []string, absent []string) {
+		t.Helper()
+		meta, exists := env.tm.GetTable(table)
+		if !exists {
+			t.Fatalf("expected builtin table %s to exist", table)
+		}
+		got := make(map[string]bool, len(meta.Columns))
+		for _, col := range meta.Columns {
+			got[col.Name] = true
+		}
+		for _, name := range want {
+			if !got[name] {
+				t.Fatalf("%s: expected column %s", table, name)
+			}
+		}
+		for _, name := range absent {
+			if got[name] {
+				t.Fatalf("%s: unexpected stale column %s", table, name)
+			}
+		}
+	}
+
+	assertColumns("agent_sessions", []string{"state", "metadata"}, []string{"status"})
+	assertColumns("agent_memories", []string{"session_id", "access_count", "accessed_at"}, []string{"agent_id"})
+	assertColumns("agent_decisions", []string{"type", "input", "output", "duration_ms"}, []string{"agent_id", "decision_type", "action", "result"})
 }
 
 func TestTableManager_ListTables(t *testing.T) {
@@ -169,6 +200,23 @@ func TestTableManager_CreateTableAndGetPrefix(t *testing.T) {
 	}
 	if prefix < 0x30 {
 		t.Fatalf("expected prefix >= 0x30, got 0x%02x", prefix)
+	}
+}
+
+func TestTableManager_CreateTablePrefixExhaustion(t *testing.T) {
+	env := newTableManagerTestEnv(t)
+
+	columns := []storage.ColumnMeta{
+		{Name: "id", Type: "VARCHAR", Length: 64, PrimaryKey: true},
+	}
+	for i := 0; i < 0xFE-0x30+1; i++ {
+		if err := env.tm.CreateTable(env.ctx, fmt.Sprintf("table_%03d", i), columns, false); err != nil {
+			t.Fatalf("create table %d: %v", i, err)
+		}
+	}
+	err := env.tm.CreateTable(env.ctx, "overflow", columns, false)
+	if err == nil {
+		t.Fatal("expected prefix exhaustion error")
 	}
 }
 

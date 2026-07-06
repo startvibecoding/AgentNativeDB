@@ -109,6 +109,25 @@ func TestVectorStore_InsertNotFoundIndex(t *testing.T) {
 	}
 }
 
+func TestVectorStore_InsertDimensionMismatch(t *testing.T) {
+	env := newVectorStoreTestEnv(t)
+
+	if err := env.store.CreateIndex("test", 3, "cosine"); err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+
+	err := env.store.Insert("test", "vec-001", []float32{0.1, 0.2})
+	if err == nil {
+		t.Fatal("expected dimension mismatch error")
+	}
+	if env.store.Len("test") != 0 {
+		t.Fatalf("expected no indexed vectors, got %d", env.store.Len("test"))
+	}
+	if _, err := env.engine.Get(env.ctx, EncodeVectorKey("test", "vec-001")); err != storage.ErrKeyNotFound {
+		t.Fatalf("expected vector not persisted, got %v", err)
+	}
+}
+
 func TestVectorStore_Search(t *testing.T) {
 	env := newVectorStoreTestEnv(t)
 
@@ -148,6 +167,19 @@ func TestVectorStore_SearchNotFoundIndex(t *testing.T) {
 	}
 }
 
+func TestVectorStore_SearchDimensionMismatch(t *testing.T) {
+	env := newVectorStoreTestEnv(t)
+
+	if err := env.store.CreateIndex("test", 3, "cosine"); err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+
+	_, err := env.store.Search("test", []float32{0.1, 0.2}, 5)
+	if err == nil {
+		t.Fatal("expected dimension mismatch error")
+	}
+}
+
 func TestVectorStore_SearchTopK(t *testing.T) {
 	env := newVectorStoreTestEnv(t)
 
@@ -184,6 +216,23 @@ func TestVectorStore_Delete(t *testing.T) {
 
 	if env.store.Len("test") != 0 {
 		t.Fatalf("expected 0 vectors after delete, got %d", env.store.Len("test"))
+	}
+}
+
+func TestVectorStore_DeleteRemovesPayload(t *testing.T) {
+	env := newVectorStoreTestEnv(t)
+
+	if err := env.store.CreateIndex("test", 3, "cosine"); err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+	if err := env.store.InsertWithPayload("test", "vec-001", []float32{0.1, 0.2, 0.3}, []byte(`{"k":"v"}`)); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := env.store.Delete("test", "vec-001"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := env.engine.Get(env.ctx, storage.EncodeVectorPayloadKey("test", "vec-001")); err != storage.ErrKeyNotFound {
+		t.Fatalf("expected payload removed, got %v", err)
 	}
 }
 

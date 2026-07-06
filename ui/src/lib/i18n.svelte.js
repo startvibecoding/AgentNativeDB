@@ -348,6 +348,7 @@ curl -X POST http://localhost:8400/mcp \  -H 'Content-Type: application/json' \ 
     'tables.noIndexes': '暂无索引',
     'tables.indexExists': '索引已存在',
     'tables.indexCreated': '索引创建成功',
+    'tables.fulltextIndex': '全文索引',
 
     // SQL
     'sql.editor': 'SQL 编辑器',
@@ -366,6 +367,7 @@ curl -X POST http://localhost:8400/mcp \  -H 'Content-Type: application/json' \ 
     'sql.presets.decisions': '查看决策',
     'sql.presets.countSessions': '统计会话',
     'sql.presets.countMemories': '统计记忆',
+    'sql.presets.fulltext': '全文搜索',
 
     // Sessions
     'sessions.create': '创建会话',
@@ -770,6 +772,7 @@ Each line of stdin/stdout is a JSON-RPC object; methods are the same as above.
     'tables.noIndexes': 'No indexes',
     'tables.indexExists': 'Index already exists',
     'tables.indexCreated': 'Index created',
+    'tables.fulltextIndex': 'Full-text',
 
     // SQL
     'sql.editor': 'SQL Editor',
@@ -788,6 +791,7 @@ Each line of stdin/stdout is a JSON-RPC object; methods are the same as above.
     'sql.presets.decisions': 'Decisions',
     'sql.presets.countSessions': 'Count Sessions',
     'sql.presets.countMemories': 'Count Memories',
+    'sql.presets.fulltext': 'Full-text Search',
 
     // Sessions
     'sessions.create': 'New Session',

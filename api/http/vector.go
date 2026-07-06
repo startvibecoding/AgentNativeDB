@@ -153,7 +153,7 @@ func (r *Router) handleSearchVector(w http.ResponseWriter, req *http.Request) {
 		body.TopK = 10
 	}
 
-	results, err := r.vectors.SearchWithPayloads(name, body.Vector, body.TopK)
+	results, err := r.vectors.SearchWithVectors(name, body.Vector, body.TopK, body.WithPayload)
 	if err != nil {
 		jsonError(w, 400, err.Error())
 		return

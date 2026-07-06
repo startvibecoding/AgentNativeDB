@@ -108,6 +108,7 @@ func TestLexer_Keywords(t *testing.T) {
 		{"FALSE", TOKEN_FALSE},
 		{"COUNT", TOKEN_COUNT},
 		{"SUM", TOKEN_SUM},
+		{"FULLTEXT", TOKEN_FULLTEXT},
 	}
 
 	for _, tt := range tests {

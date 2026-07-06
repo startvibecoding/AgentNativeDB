@@ -646,16 +646,13 @@ func (p *Parser) parseShowTables() (*ShowTablesStmt, error) {
 // ========== 分派：CREATE / DROP / SHOW ==========
 
 func (p *Parser) parseCreate() (Statement, error) {
-	// 前看下一个 token 判断是 TABLE 还是 (UNIQUE) INDEX
+	// 前看后续 token 判断是 TABLE 还是 [UNIQUE] [FULLTEXT] INDEX
 	save := p.pos
 	p.advance() // CREATE
-	tok := p.peek()
-	// 允许 CREATE UNIQUE INDEX ...
-	if tok.Type == TOKEN_UNIQUE {
-		p.pos = save
-		return p.parseCreateIndex()
+	for p.peek().Type == TOKEN_UNIQUE || p.peek().Type == TOKEN_FULLTEXT {
+		p.advance()
 	}
-	if tok.Type == TOKEN_INDEX {
+	if p.peek().Type == TOKEN_INDEX {
 		p.pos = save
 		return p.parseCreateIndex()
 	}
@@ -693,10 +690,19 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 	stmt := &CreateIndexStmt{IndexType: "BTREE"}
 
 	p.expect(TOKEN_CREATE)
-	if p.peek().Type == TOKEN_UNIQUE {
-		p.advance()
-		stmt.Unique = true
+	for {
+		switch p.peek().Type {
+		case TOKEN_UNIQUE:
+			p.advance()
+			stmt.Unique = true
+		case TOKEN_FULLTEXT:
+			p.advance()
+			stmt.IndexType = "INVERTED"
+		default:
+			goto expectIndex
+		}
 	}
+expectIndex:
 	if err := p.expect(TOKEN_INDEX); err != nil {
 		return nil, err
 	}
@@ -743,7 +749,7 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 		return nil, err
 	}
 
-	// [USING HASH|BTREE|INVERTED]
+	// [USING HASH|BTREE|INVERTED|FULLTEXT]
 	if p.peek().Type == TOKEN_USING {
 		p.advance()
 		typTok := p.peek()
@@ -754,8 +760,10 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 			stmt.IndexType = "BTREE"
 		case TOKEN_INVERTED:
 			stmt.IndexType = "INVERTED"
+		case TOKEN_FULLTEXT:
+			stmt.IndexType = "INVERTED"
 		default:
-			return nil, fmt.Errorf("expected HASH/BTREE/INVERTED after USING, got %s at position %d", typTok.Type, typTok.Pos)
+			return nil, fmt.Errorf("expected HASH/BTREE/INVERTED/FULLTEXT after USING, got %s at position %d", typTok.Type, typTok.Pos)
 		}
 		p.advance()
 	}
