@@ -181,6 +181,26 @@ func TestIndex_UsingFullTextAlias_Match(t *testing.T) {
 	}
 }
 
+func TestIndex_Inverted_MatchChineseSubstring(t *testing.T) {
+	e := setupIndexExecutor(t)
+
+	runSQL(t, e, "CREATE TABLE docs (id VARCHAR(64) PRIMARY KEY, body TEXT)")
+	runSQL(t, e, "CREATE INDEX idx_docs_body ON docs(body) USING INVERTED")
+
+	runSQL(t, e, "INSERT INTO docs (id, body) VALUES ('d1', '数据库系统支持向量检索和全文搜索')")
+	runSQL(t, e, "INSERT INTO docs (id, body) VALUES ('d2', '图数据库支持最短路径查询')")
+
+	res := runSQL(t, e, "SELECT * FROM docs WHERE MATCH(body) AGAINST ('全文搜索')")
+	if len(res.Rows) != 1 {
+		t.Errorf("expected 1 row matching 全文搜索, got %d", len(res.Rows))
+	}
+
+	res2 := runSQL(t, e, "SELECT * FROM docs WHERE MATCH(body) AGAINST ('向量检索')")
+	if len(res2.Rows) != 1 {
+		t.Errorf("expected 1 row matching 向量检索, got %d", len(res2.Rows))
+	}
+}
+
 func TestIndex_UpdateDeleteMaintain(t *testing.T) {
 	e := setupIndexExecutor(t)
 

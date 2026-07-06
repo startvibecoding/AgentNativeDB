@@ -5,7 +5,7 @@
 AgentNativeDB is a **Go 1.23+** agent-native database system combining a SQL query engine, vector search (HNSW), graph store, knowledge/lineage tracking, and MCP server integration. It ships with a Svelte-based Web UI embedded into a single binary. Built on BadgerDB (pure Go, no CGO). The binary is called `andb`.
 
 Module path: `github.com/startvibecoding/AgentNativeDB`
-External runtime deps: `github.com/dgraph-io/badger/v4`, `github.com/go-ego/gse` (Chinese tokenization), `github.com/chzyer/readline` (CLI).
+External runtime deps: `github.com/dgraph-io/badger/v4`.
 
 ## Important Directories
 
@@ -20,7 +20,7 @@ External runtime deps: `github.com/dgraph-io/badger/v4`, `github.com/go-ego/gse`
 | `internal/model/` | Core data types: `Session`, `Memory`, `Decision`, `Entity`, plus `types.go` helpers |
 | `internal/agent/` | Agent runtime: session, memory (+enhanced), decision, coordinator, RAG, audit, permissions, task queue |
 | `internal/query/sql/` | SQL engine: lexer, parser (recursive descent), AST, planner, executor, stats |
-| `internal/query/sql/index/` | Secondary indexes: Hash, BTree, Inverted (with gse Chinese tokenization) |
+| `internal/query/sql/index/` | Secondary indexes: Hash, BTree, Inverted (with built-in full-text tokenization) |
 | `internal/query/graph/` | Graph query surface exposed through the query layer |
 | `internal/query/vector/` | Vector query surface exposed through the query layer |
 | `internal/vector/` | HNSW vector index: distance functions (cosine / l2 / dot), store |
@@ -45,7 +45,7 @@ Key patterns:
 - **Key encoding**: 1-byte table prefix (e.g. `0x01`=sessions, `0x02`=memories) + field values (`internal/storage/keyencode.go`).
 - **Custom SQL**: Hand-written recursive descent parser; no third-party SQL library. Supported data types: `INT`, `INTEGER`, `VARCHAR`, `TEXT`, `STRING`, `FLOAT`, `BOOL`, `BOOLEAN`.
 - **Custom HNSW**: Hand-written vector index; no third-party vector library.
-- **Minimal deps**: Only BadgerDB and gse are core external dependencies (plus readline for CLI).
+- **Minimal deps**: Only BadgerDB is a core external dependency.
 - **Single binary**: The Web UI is built with Vite then embedded into the Go binary during `make build`.
 
 ## Build / Test / Run Commands

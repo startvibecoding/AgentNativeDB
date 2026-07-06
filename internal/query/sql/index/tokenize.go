@@ -3,63 +3,104 @@ package index
 import (
 	"strings"
 	"unicode"
-
-	"github.com/go-ego/gse"
 )
-
-// seg 全局分词器（懒加载）
-var seg gse.Segmenter
-var segInited bool
-
-func initSeg() {
-	if segInited {
-		return
-	}
-	segInited = true
-	// 加载内置中文词典（gse 默认包含）
-	seg.LoadDict()
-}
 
 // Tokenize 将文本切分为 term 序列，用于 Inverted 索引。
 //
 // 规则：
 //   - ASCII 字母/数字 连续段作为一个 token，转小写；
-//   - CJK 文本使用 gse 分词器切分（支持中英文混合）；
+//   - CJK 文本使用搜索分词：bigram 和单字同时入索引；
 //   - 空 token 和标点符号被丢弃；
 //   - 结果去重，保持插入顺序。
 func Tokenize(text string) []string {
-	initSeg()
-
-	// gse 分词，模式：Search 模式（细粒度，适合搜索）
-	words := seg.CutSearch(text, true)
-
 	var tokens []string
-	seen := make(map[string]struct{}, len(words))
+	seen := make(map[string]struct{})
 
-	for _, w := range words {
-		w = strings.TrimSpace(w)
-		if w == "" {
-			continue
+	emit := func(word string) {
+		word = strings.TrimSpace(word)
+		if word == "" || isPunctuation(word) {
+			return
 		}
-
-		// ASCII token 转小写
-		if isAllASCII(w) {
-			w = strings.ToLower(w)
+		if isAllASCII(word) {
+			word = strings.ToLower(word)
 		}
-
-		// 跳过纯标点
-		if isPunctuation(w) {
-			continue
+		if _, ok := seen[word]; ok {
+			return
 		}
-
-		if _, ok := seen[w]; ok {
-			continue
-		}
-		seen[w] = struct{}{}
-		tokens = append(tokens, w)
+		seen[word] = struct{}{}
+		tokens = append(tokens, word)
 	}
 
+	var ascii strings.Builder
+	var cjk []rune
+	flushASCII := func() {
+		if ascii.Len() == 0 {
+			return
+		}
+		emit(ascii.String())
+		ascii.Reset()
+	}
+	flushCJK := func() {
+		if len(cjk) == 0 {
+			return
+		}
+		tokenizeCJK(cjk, emit)
+		cjk = cjk[:0]
+	}
+
+	for _, r := range text {
+		switch {
+		case isASCIIWord(r):
+			flushCJK()
+			ascii.WriteRune(unicode.ToLower(r))
+		case isCJKWord(r):
+			flushASCII()
+			cjk = append(cjk, r)
+		default:
+			flushASCII()
+			flushCJK()
+		}
+	}
+	flushASCII()
+	flushCJK()
+
 	return tokens
+}
+
+// tokenizeCJK 生成面向搜索的 CJK term。
+//
+// bigram 支持常见中文词检索，单字保证短查询和跨词边界仍可命中。
+func tokenizeCJK(runes []rune, emit func(string)) {
+	n := len(runes)
+	if n == 0 {
+		return
+	}
+	for i := 0; i+1 < n; i++ {
+		emit(string(runes[i : i+2]))
+	}
+	for _, r := range runes {
+		emit(string(r))
+	}
+}
+
+// isASCIIWord 判断是否属于 ASCII 单词字符。
+func isASCIIWord(r rune) bool {
+	return r <= 127 && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_')
+}
+
+// isCJKWord 判断是否属于需要按搜索分词处理的非 ASCII 文字。
+func isCJKWord(r rune) bool {
+	if r <= 127 {
+		return false
+	}
+	switch {
+	case unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul):
+		return true
+	case unicode.IsLetter(r) || unicode.IsDigit(r):
+		return true
+	default:
+		return false
+	}
 }
 
 // isAllASCII 检查字符串是否全是 ASCII 字符

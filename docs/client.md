@@ -171,7 +171,7 @@ cmd/andb/          统一入口（server/cli/client 子命令）
 
 ### 依赖
 
-无额外依赖（readline 已内置于统一二进制）
+无额外依赖
 
 ### API端点
 
