@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"runtime"
 	"sync"
 	"testing"
@@ -12,12 +11,12 @@ import (
 
 	"github.com/startvibecoding/AgentNativeDB/internal/model"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 	"github.com/startvibecoding/AgentNativeDB/internal/util"
 )
 
 type reliabilityEnv struct {
-	engine      *badgerstore.BadgerEngine
+	engine      storage.Engine
 	cache       *storage.Cache
 	session     *SessionManagerEnhanced
 	memory      *MemoryStoreEnhanced
@@ -30,18 +29,7 @@ type reliabilityEnv struct {
 
 func newReliabilityEnv(t *testing.T, timeout, cleanupInterval time.Duration) *reliabilityEnv {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	cache := storage.NewCache(512)
 	session := NewSessionManagerEnhanced(engine, cache, SessionConfig{
@@ -187,14 +175,7 @@ func TestReliability_MemoryDecayOverTime(t *testing.T) {
 
 func TestReliability_TaskQueueLongRun(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	engine := storage.NewTestEngine(t)
 
 	queue := NewTaskQueue(engine)
 
@@ -232,8 +213,6 @@ func TestReliability_TaskQueueLongRun(t *testing.T) {
 
 	queue.Close()
 	engine.Close()
-	os.RemoveAll(dir)
-
 	if processed != n {
 		t.Fatalf("expected to process %d tasks, got %d", n, processed)
 	}
@@ -241,14 +220,7 @@ func TestReliability_TaskQueueLongRun(t *testing.T) {
 
 func TestReliability_TaskQueueMixedOperations(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	engine := storage.NewTestEngine(t)
 
 	queue := NewTaskQueue(engine)
 	ctx := context.Background()
@@ -297,8 +269,6 @@ func TestReliability_TaskQueueMixedOperations(t *testing.T) {
 
 	queue.Close()
 	engine.Close()
-	os.RemoveAll(dir)
-
 	total := processed + failed + cancelled
 	if total != n {
 		t.Fatalf("expected %d total operations, got %d (processed=%d, failed=%d, cancelled=%d)", n, total, processed, failed, cancelled)
@@ -525,12 +495,7 @@ func TestReliability_NoMemoryLeak(t *testing.T) {
 	runtime.ReadMemStats(&m1)
 
 	// Perform many operations
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
+	engine := storage.NewTestEngine(t)
 
 	cache := storage.NewCache(256)
 	session := NewSessionManagerEnhanced(engine, cache, SessionConfig{
@@ -552,8 +517,6 @@ func TestReliability_NoMemoryLeak(t *testing.T) {
 
 	session.Stop()
 	engine.Close()
-	os.RemoveAll(dir)
-
 	runtime.GC()
 	var m2 runtime.MemStats
 	runtime.ReadMemStats(&m2)
@@ -569,14 +532,7 @@ func TestReliability_NoMemoryLeak(t *testing.T) {
 
 func TestReliability_GracefulShutdown(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = true // Ensure data is flushed
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	engine := storage.NewTestEngine(t)
 
 	cache := storage.NewCache(512)
 	session := NewSessionManager(engine, cache)
@@ -693,14 +649,7 @@ func TestReliability_StoreRecallCycle(t *testing.T) {
 // ========== Benchmark: Long-Run Operations ==========
 
 func BenchmarkReliability_ConcurrentSession(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	cache := storage.NewCache(512)
 	session := NewSessionManager(engine, cache)
 	ctx := context.Background()
@@ -717,14 +666,7 @@ func BenchmarkReliability_ConcurrentSession(b *testing.B) {
 }
 
 func BenchmarkReliability_ConcurrentMemory(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	cache := storage.NewCache(512)
 	memory := NewMemoryStore(engine, cache)
 	ctx := context.Background()

@@ -18,7 +18,7 @@ import (
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger" // 注册 badger 引擎
 	"github.com/startvibecoding/AgentNativeDB/internal/vector"
 )
 
@@ -48,21 +48,14 @@ func runServer(args []string) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	// 存储
-	engine := badgerstore.New()
-	opts := storage.Options{
-		DataDir:          cfg.Storage.DataDir,
-		SyncWrites:       cfg.Storage.SyncWrites,
-		ValueLogFileSize: cfg.Storage.ValueLogFileSize,
-		MemTableSize:     cfg.Storage.MemTableSize,
-		NumMemTables:     cfg.Storage.NumMemTables,
-		CacheSizeMB:      cfg.Storage.CacheSizeMB,
-	}
-	if err := engine.Open(opts); err != nil {
-		log.Fatalf("open storage: %v", err)
+	// 存储：通过注册表创建引擎
+	opts := cfg.Storage.StorageOpts()
+	engine, err := storage.CreateEngine(opts)
+	if err != nil {
+		log.Fatalf("create storage engine: %v", err)
 	}
 	defer engine.Close()
-	slog.Info("storage opened", "data_dir", cfg.Storage.DataDir)
+	slog.Info("storage opened", "backend", opts.Backend, "data_dir", opts.DataDir)
 
 	cacheEntries := cfg.Storage.CacheSizeMB * 512
 	if cacheEntries <= 0 {

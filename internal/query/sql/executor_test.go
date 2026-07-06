@@ -3,27 +3,15 @@ package sql
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 func setupTestDB(t *testing.T) *Executor {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	ctx := context.Background()
 
@@ -328,14 +316,7 @@ func TestExecutor_EndToEndWorkflow(t *testing.T) {
 }
 
 func BenchmarkExecutor_SelectAll(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	ctx := context.Background()
 	for i := 0; i < 100; i++ {
 		data, _ := json.Marshal(map[string]any{"id": "s" + string(rune(i)), "agent_id": "agent-001", "state": "active"})

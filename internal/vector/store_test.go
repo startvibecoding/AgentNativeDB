@@ -3,33 +3,21 @@ package vector
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 type vectorStoreTestEnv struct {
-	engine *badgerstore.BadgerEngine
+	engine storage.Engine
 	store  *VectorStore
 	ctx    context.Context
 }
 
 func newVectorStoreTestEnv(t *testing.T) *vectorStoreTestEnv {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	return &vectorStoreTestEnv{
 		engine: engine,
@@ -320,11 +308,13 @@ func TestVectorStore_ListIndexesEmpty(t *testing.T) {
 
 func TestVectorStore_Persistence(t *testing.T) {
 	dir := t.TempDir()
-	engine := badgerstore.New()
 	opts := storage.DefaultOptions()
 	opts.DataDir = dir
 	opts.SyncWrites = false
-	engine.Open(opts)
+	engine, err := storage.CreateEngine(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	store := NewVectorStore(engine)
 	store.CreateIndex("test", 3, "cosine")
@@ -333,13 +323,11 @@ func TestVectorStore_Persistence(t *testing.T) {
 	// Close and reopen
 	engine.Close()
 
-	engine2 := badgerstore.New()
-	opts2 := storage.DefaultOptions()
-	opts2.DataDir = dir
-	opts2.SyncWrites = false
-	engine2.Open(opts2)
+	engine2, err := storage.CreateEngine(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer engine2.Close()
-
 	store2 := NewVectorStore(engine2)
 	store2.CreateIndex("test", 3, "cosine")
 
@@ -439,14 +427,7 @@ func TestExtractVectorIDInvalid(t *testing.T) {
 // ========== Benchmark Tests ==========
 
 func BenchmarkVectorStore_Insert(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	store := NewVectorStore(engine)
 	store.CreateIndex("bench", 128, "cosine")
 
@@ -463,14 +444,7 @@ func BenchmarkVectorStore_Insert(b *testing.B) {
 }
 
 func BenchmarkVectorStore_Search(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	store := NewVectorStore(engine)
 	store.CreateIndex("bench", 128, "cosine")
 

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"time"
+
+	"github.com/startvibecoding/AgentNativeDB/internal/storage"
 )
 
 // Config 数据库配置
@@ -25,12 +27,41 @@ type ServerConfig struct {
 
 // StorageConfig 存储配置
 type StorageConfig struct {
-	DataDir          string `json:"data_dir"`
-	ValueLogFileSize int64  `json:"value_log_file_size"`
-	MemTableSize     int64  `json:"mem_table_size"`
-	NumMemTables     int    `json:"num_mem_tables"`
-	SyncWrites       bool   `json:"sync_writes"`
-	CacheSizeMB      int    `json:"cache_size_mb"`
+	Backend     string `json:"backend"`     // 存储引擎名称，如 "badger"
+	DataDir     string `json:"data_dir"`
+	SyncWrites  bool   `json:"sync_writes"`
+	CacheSizeMB int    `json:"cache_size_mb"`
+
+	// Badger 专属配置（仅 Backend=badger 时生效）
+	Badger BadgerConfig `json:"badger"`
+}
+
+// BadgerConfig BadgerDB 专属配置
+type BadgerConfig struct {
+	ValueLogFileSize int64 `json:"value_log_file_size"`
+	MemTableSize     int64 `json:"mem_table_size"`
+	NumMemTables     int   `json:"num_mem_tables"`
+}
+
+// StorageOpts 将 StorageConfig 转为 storage.Options，供 storage.CreateEngine 使用。
+func (sc StorageConfig) StorageOpts() storage.Options {
+	backendOpts := map[string]any{}
+	if sc.Badger.ValueLogFileSize > 0 {
+		backendOpts["value_log_file_size"] = sc.Badger.ValueLogFileSize
+	}
+	if sc.Badger.MemTableSize > 0 {
+		backendOpts["mem_table_size"] = sc.Badger.MemTableSize
+	}
+	if sc.Badger.NumMemTables > 0 {
+		backendOpts["num_mem_tables"] = sc.Badger.NumMemTables
+	}
+	return storage.Options{
+		Backend:     sc.Backend,
+		DataDir:     sc.DataDir,
+		SyncWrites:  sc.SyncWrites,
+		CacheSizeMB: sc.CacheSizeMB,
+		BackendOpts: backendOpts,
+	}
 }
 
 // AgentConfig Agent 配置
@@ -79,12 +110,15 @@ func Default() *Config {
 			WriteTimeout: 30 * time.Second,
 		},
 		Storage: StorageConfig{
-			DataDir:          "./data",
-			ValueLogFileSize: 64 << 20, // 64MB
-			MemTableSize:     16 << 20, // 16MB
-			NumMemTables:     3,
-			SyncWrites:       true,
-			CacheSizeMB:      256,
+			Backend:     storage.BackendBadger,
+			DataDir:     "./data",
+			SyncWrites:  true,
+			CacheSizeMB: 256,
+			Badger: BadgerConfig{
+				ValueLogFileSize: 64 << 20, // 64MB
+				MemTableSize:     16 << 20, // 16MB
+				NumMemTables:     3,
+			},
 		},
 		Agent: AgentConfig{
 			SessionTimeout:  24 * time.Hour,

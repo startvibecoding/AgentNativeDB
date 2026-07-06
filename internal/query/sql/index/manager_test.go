@@ -2,27 +2,15 @@ package index
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 func setupTestIndex(t *testing.T) (*Manager, context.Context) {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 	mgr := NewManager(engine)
 	ctx := context.Background()
 	if err := mgr.Init(ctx); err != nil {
@@ -117,11 +105,13 @@ func TestManager_FindByColumn(t *testing.T) {
 
 func TestManager_PersistAndReload(t *testing.T) {
 	dir := t.TempDir()
-	engine := badgerstore.New()
 	opts := storage.DefaultOptions()
 	opts.DataDir = dir
 	opts.SyncWrites = false
-	engine.Open(opts)
+	engine, err := storage.CreateEngine(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// 创建索引
 	mgr1 := NewManager(engine)
@@ -130,12 +120,11 @@ func TestManager_PersistAndReload(t *testing.T) {
 	engine.Close()
 
 	// 重新加载
-	engine2 := badgerstore.New()
-	opts2 := storage.DefaultOptions()
-	opts2.DataDir = dir
-	engine2.Open(opts2)
+	engine2, err := storage.CreateEngine(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer engine2.Close()
-
 	mgr2 := NewManager(engine2)
 	mgr2.Init(context.Background())
 

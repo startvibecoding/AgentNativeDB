@@ -12,7 +12,7 @@ import (
 
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger" // 注册 badger 引擎
 )
 
 func runCLI(args []string) {
@@ -20,16 +20,19 @@ func runCLI(args []string) {
 	dataDir := fs.String("data", "./data", "数据目录")
 	fs.Parse(args)
 
-	engine := badgerstore.New()
-	opts := storage.Options{
-		DataDir:          *dataDir,
-		SyncWrites:       false,
-		ValueLogFileSize: 64 << 20,
-		MemTableSize:     16 << 20,
-		NumMemTables:     3,
-	}
-	if err := engine.Open(opts); err != nil {
-		log.Fatalf("open storage: %v", err)
+	engine, err := storage.CreateEngine(storage.Options{
+		Backend:     storage.BackendBadger,
+		DataDir:     *dataDir,
+		SyncWrites:  false,
+		CacheSizeMB: 256,
+		BackendOpts: map[string]any{
+			"value_log_file_size": int64(64 << 20),
+			"mem_table_size":      int64(16 << 20),
+			"num_mem_tables":      3,
+		},
+	})
+	if err != nil {
+		log.Fatalf("create storage engine: %v", err)
 	}
 	defer engine.Close()
 

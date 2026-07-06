@@ -2,27 +2,15 @@ package graph
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 func setupGraphStore(t *testing.T) *GraphStore {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 	return NewGraphStore(engine)
 }
 
@@ -275,14 +263,7 @@ func TestGraphStore_ComplexGraph(t *testing.T) {
 }
 
 func BenchmarkGraphStore_AddNode(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	g := NewGraphStore(engine)
 	ctx := context.Background()
 
@@ -293,14 +274,7 @@ func BenchmarkGraphStore_AddNode(b *testing.B) {
 }
 
 func BenchmarkGraphStore_BFS(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	g := NewGraphStore(engine)
 	ctx := context.Background()
 

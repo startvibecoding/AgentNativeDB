@@ -4,18 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"math"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/model"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 	"github.com/startvibecoding/AgentNativeDB/internal/vector"
 )
 
 type e2eTestEnv struct {
-	engine      *badgerstore.BadgerEngine
+	engine      storage.Engine
 	cache       *storage.Cache
 	session     *SessionManager
 	memory      *MemoryStore
@@ -29,18 +28,7 @@ type e2eTestEnv struct {
 
 func newE2ETestEnv(t *testing.T) *e2eTestEnv {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	cache := storage.NewCache(512)
 	session := NewSessionManager(engine, cache)
@@ -719,14 +707,7 @@ func TestE2E_EmptyStateOperations(t *testing.T) {
 // ========== Benchmark: Full Workflow ==========
 
 func BenchmarkE2E_FullSessionWorkflow(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	cache := storage.NewCache(512)
 	session := NewSessionManager(engine, cache)
 	memory := NewMemoryStore(engine, cache)
@@ -747,14 +728,7 @@ func BenchmarkE2E_FullSessionWorkflow(b *testing.B) {
 }
 
 func BenchmarkE2E_TaskQueueWorkflow(b *testing.B) {
-	dir := b.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	engine.Open(opts)
-	defer engine.Close()
-
+	engine := storage.NewTestEngine(b)
 	queue := NewTaskQueue(engine)
 	ctx := context.Background()
 

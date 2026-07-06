@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -520,11 +521,25 @@ func (e *Executor) executeInsert(ctx context.Context, node *InsertPlan) (*Result
 	if prefix == 0 {
 		return nil, fmt.Errorf("unknown table: %s", table)
 	}
+	meta, _ := e.tables.GetTable(table)
+	if !isUserTableMeta(meta) {
+		meta = nil
+	}
 
 	var affected int64
 	for _, values := range node.Stmt.Values {
 		row := make(map[string]any)
-		for i, col := range node.Stmt.Columns {
+		columns := node.Stmt.Columns
+		if len(columns) == 0 && meta != nil {
+			columns = make([]string, 0, len(meta.Columns))
+			for _, col := range meta.Columns {
+				columns = append(columns, col.Name)
+			}
+		}
+		if len(columns) != len(values) {
+			return nil, fmt.Errorf("INSERT 值数量与列数量不匹配")
+		}
+		for i, col := range columns {
 			if i < len(values) {
 				row[col] = evalLiteral(values[i])
 			}
@@ -533,17 +548,17 @@ func (e *Executor) executeInsert(ctx context.Context, node *InsertPlan) (*Result
 		// 生成 ID（如果未指定则自动生成）
 		id := ""
 		if v, ok := row["id"]; ok && v != nil {
-			switch val := v.(type) {
-			case string:
-				id = val
-			case int64:
-				id = strconv.FormatInt(val, 10)
-			case float64:
-				id = strconv.FormatFloat(val, 'f', -1, 64)
-			case bool:
-				id = strconv.FormatBool(val)
-			default:
-				id = fmt.Sprintf("%v", val)
+			id = rowIDString(v)
+		}
+		if id == "" && tableHasColumn(meta, "id") {
+			id = util.NewUUID()
+			row["id"] = id
+		}
+		if meta != nil {
+			var err error
+			id, err = e.validateRowForWrite(ctx, meta, row, "", true)
+			if err != nil {
+				return nil, err
 			}
 		}
 		if id == "" {
@@ -588,6 +603,10 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 	if prefix == 0 {
 		return nil, fmt.Errorf("unknown table: %s", table)
 	}
+	meta, _ := e.tables.GetTable(table)
+	if !isUserTableMeta(meta) {
+		meta = nil
+	}
 
 	var affected int64
 	for _, row := range scanResult.Rows {
@@ -603,9 +622,24 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 			row.Values[set.Column] = val
 		}
 
-		// 获取 ID
-		id, ok := row.Values["id"].(string)
-		if !ok {
+		// 获取行 ID
+		rowIDColumn := "id"
+		if meta != nil {
+			rowIDColumn = rowIDColumnForMeta(meta)
+		}
+		oldID := rowIDString(oldRow[rowIDColumn])
+		if oldID == "" {
+			continue
+		}
+		id := rowIDString(row.Values[rowIDColumn])
+		if meta != nil {
+			var err error
+			id, err = e.validateRowForWrite(ctx, meta, row.Values, oldID, false)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if id == "" {
 			continue
 		}
 
@@ -614,13 +648,25 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 			continue
 		}
 
-		indexOps, err := e.indexes.UpdateRowOps(ctx, table, oldRow, row.Values, id)
+		var indexOps []storage.WriteOp
+		if id == oldID {
+			indexOps, err = e.indexes.UpdateRowOps(ctx, table, oldRow, row.Values, id)
+		} else {
+			indexOps = e.indexes.DeleteRowOps(table, oldRow, oldID)
+			insertOps, err := e.indexes.InsertRowOps(ctx, table, row.Values, id)
+			if err == nil {
+				indexOps = append(indexOps, insertOps...)
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("index update: %w", err)
 		}
 
 		key := storage.EncodeKey(prefix, id)
-		ops := make([]storage.WriteOp, 0, 1+len(indexOps))
+		ops := make([]storage.WriteOp, 0, 2+len(indexOps))
+		if id != oldID {
+			ops = append(ops, storage.WriteOp{Type: storage.OpDelete, Key: storage.EncodeKey(prefix, oldID)})
+		}
 		ops = append(ops, storage.WriteOp{Type: storage.OpPut, Key: key, Value: data})
 		ops = append(ops, indexOps...)
 		if err := e.engine.BatchWrite(ctx, ops); err != nil {
@@ -630,6 +676,143 @@ func (e *Executor) executeUpdate(ctx context.Context, node *UpdatePlan) (*Result
 	}
 
 	return &Result{RowsAffected: affected}, nil
+}
+
+func (e *Executor) validateRowForWrite(ctx context.Context, meta *storage.TableMetadata, row map[string]any, oldID string, insert bool) (string, error) {
+	columns := make(map[string]storage.ColumnMeta, len(meta.Columns))
+	for _, col := range meta.Columns {
+		columns[col.Name] = col
+		if insert {
+			if _, ok := row[col.Name]; !ok && col.Default != nil {
+				row[col.Name] = col.Default
+			}
+		}
+	}
+
+	for name := range row {
+		if _, ok := columns[name]; !ok {
+			return "", fmt.Errorf("列 %s 不存在于表 %s", name, meta.Name)
+		}
+	}
+
+	for _, col := range meta.Columns {
+		val, exists := row[col.Name]
+		if !exists {
+			val = nil
+		}
+		if (col.PrimaryKey || !col.Nullable) && val == nil {
+			constraint := "NOT NULL"
+			if col.PrimaryKey {
+				constraint = "PRIMARY KEY"
+			}
+			return "", fmt.Errorf("%s 约束失败: %s.%s", constraint, meta.Name, col.Name)
+		}
+		if val == nil {
+			continue
+		}
+		if err := validateColumnValue(meta.Name, col, val); err != nil {
+			return "", err
+		}
+	}
+
+	rowIDColumn := rowIDColumnForMeta(meta)
+	rowID := rowIDString(row[rowIDColumn])
+	if rowID == "" {
+		return "", fmt.Errorf("PRIMARY KEY 约束失败: %s.%s", meta.Name, rowIDColumn)
+	}
+	if rowID != oldID {
+		key := storage.EncodeKey(meta.Prefix, rowID)
+		if _, err := e.engine.Get(ctx, key); err == nil {
+			return "", fmt.Errorf("PRIMARY KEY 约束失败: %s.%s", meta.Name, rowIDColumn)
+		} else if !errors.Is(err, storage.ErrKeyNotFound) {
+			return "", fmt.Errorf("检查 PRIMARY KEY 约束: %w", err)
+		}
+	}
+	return rowID, nil
+}
+
+func validateColumnValue(table string, col storage.ColumnMeta, val any) error {
+	switch strings.ToUpper(col.Type) {
+	case "INT", "INTEGER":
+		switch n := val.(type) {
+		case int, int32, int64:
+			return nil
+		case float32:
+			if math.Trunc(float64(n)) == float64(n) {
+				return nil
+			}
+		case float64:
+			if math.Trunc(n) == n {
+				return nil
+			}
+		}
+	case "FLOAT":
+		if isNumeric(val) {
+			return nil
+		}
+	case "BOOL", "BOOLEAN":
+		if _, ok := val.(bool); ok {
+			return nil
+		}
+	case "VARCHAR", "STRING", "TEXT":
+		s, ok := val.(string)
+		if !ok {
+			break
+		}
+		if strings.EqualFold(col.Type, "VARCHAR") && col.Length > 0 && len(s) > col.Length {
+			return fmt.Errorf("VARCHAR 长度约束失败: %s.%s 最大长度 %d", table, col.Name, col.Length)
+		}
+		return nil
+	default:
+		return nil
+	}
+	return fmt.Errorf("类型约束失败: %s.%s 需要 %s", table, col.Name, col.Type)
+}
+
+func tableHasColumn(meta *storage.TableMetadata, name string) bool {
+	if meta == nil {
+		return false
+	}
+	for _, col := range meta.Columns {
+		if col.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func isUserTableMeta(meta *storage.TableMetadata) bool {
+	return meta != nil && meta.Prefix >= 0x30
+}
+
+func rowIDColumnForMeta(meta *storage.TableMetadata) string {
+	for _, col := range meta.Columns {
+		if col.PrimaryKey {
+			return col.Name
+		}
+	}
+	return "id"
+}
+
+func rowIDString(v any) string {
+	switch val := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return val
+	case int:
+		return strconv.Itoa(val)
+	case int32:
+		return strconv.FormatInt(int64(val), 10)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(val)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // ========== DELETE ==========
@@ -1081,6 +1264,9 @@ func (e *Executor) executeAlterTable(ctx context.Context, node *AlterTablePlan) 
 				PrimaryKey: a.Column.PrimaryKey,
 			},
 		}
+		if a.Column.Default != nil {
+			action.(*storage.AddColumnAction).Column.Default = evalLiteral(a.Column.Default)
+		}
 	case *DropColumnAction:
 		action = &storage.DropColumnAction{Column: a.Column}
 	case *ModifyColumnAction:
@@ -1092,6 +1278,9 @@ func (e *Executor) executeAlterTable(ctx context.Context, node *AlterTablePlan) 
 				Nullable:   a.Column.Nullable,
 				PrimaryKey: a.Column.PrimaryKey,
 			},
+		}
+		if a.Column.Default != nil {
+			action.(*storage.ModifyColumnAction).Column.Default = evalLiteral(a.Column.Default)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported alter action: %T", stmt.Action)

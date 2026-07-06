@@ -3,33 +3,21 @@ package storage_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 type tableManagerTestEnv struct {
-	engine *badgerstore.BadgerEngine
+	engine storage.Engine
 	tm     *storage.TableManager
 	ctx    context.Context
 }
 
 func newTableManagerTestEnv(t *testing.T) *tableManagerTestEnv {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	tm := storage.NewTableManager(engine)
 	if err := tm.Init(context.Background()); err != nil {
@@ -489,11 +477,13 @@ func TestTableManager_GetTablePrefixNotFound(t *testing.T) {
 
 func TestTableManager_Persistence(t *testing.T) {
 	dir := t.TempDir()
-	engine := badgerstore.New()
 	opts := storage.DefaultOptions()
 	opts.DataDir = dir
 	opts.SyncWrites = false
-	engine.Open(opts)
+	engine, err := storage.CreateEngine(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tm := storage.NewTableManager(engine)
 	tm.Init(context.Background())
@@ -506,13 +496,11 @@ func TestTableManager_Persistence(t *testing.T) {
 
 	engine.Close()
 
-	engine2 := badgerstore.New()
-	opts2 := storage.DefaultOptions()
-	opts2.DataDir = dir
-	opts2.SyncWrites = false
-	engine2.Open(opts2)
+	engine2, err := storage.CreateEngine(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer engine2.Close()
-
 	tm2 := storage.NewTableManager(engine2)
 	if err := tm2.Init(context.Background()); err != nil {
 		t.Fatalf("init after reopen: %v", err)

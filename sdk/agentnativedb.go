@@ -29,14 +29,14 @@ import (
 	"github.com/startvibecoding/AgentNativeDB/internal/model"
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger" // 注册 badger 引擎
 	"github.com/startvibecoding/AgentNativeDB/internal/util"
 	"github.com/startvibecoding/AgentNativeDB/internal/vector"
 )
 
 // DB 嵌入式数据库实例
 type DB struct {
-	engine      *badgerstore.BadgerEngine
+	engine      storage.Engine
 	cache       *storage.Cache
 	session     *agent.SessionManager
 	memory      *agent.MemoryStore
@@ -54,12 +54,18 @@ type DB struct {
 
 // Open 打开或创建数据库
 func Open(dataDir string) (*DB, error) {
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dataDir
-	opts.SyncWrites = true
-
-	if err := engine.Open(opts); err != nil {
+	engine, err := storage.CreateEngine(storage.Options{
+		Backend:     storage.BackendBadger,
+		DataDir:     dataDir,
+		SyncWrites:  true,
+		CacheSizeMB: 256,
+		BackendOpts: map[string]any{
+			"value_log_file_size": int64(64 << 20),
+			"mem_table_size":      int64(16 << 20),
+			"num_mem_tables":      3,
+		},
+	})
+	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 

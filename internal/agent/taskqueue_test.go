@@ -2,34 +2,22 @@ package agent
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 type taskQueueTestEnv struct {
-	engine *badgerstore.BadgerEngine
+	engine storage.Engine
 	queue  *TaskQueue
 	ctx    context.Context
 }
 
 func newTaskQueueTestEnv(t *testing.T) *taskQueueTestEnv {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	queue := NewTaskQueue(engine)
 	t.Cleanup(func() { queue.Close() })

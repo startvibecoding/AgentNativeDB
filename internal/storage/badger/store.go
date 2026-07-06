@@ -18,7 +18,21 @@ type BadgerEngine struct {
 // 确保接口实现
 var _ storage.Engine = (*BadgerEngine)(nil)
 
-// New 创建 BadgerEngine 实例
+// init 注册 BadgerDB 引擎到全局注册表
+func init() {
+	storage.Register(storage.BackendBadger, func(opts storage.Options) (storage.Engine, error) {
+		e := &BadgerEngine{}
+		if err := e.Open(opts); err != nil {
+			return nil, err
+		}
+		return e, nil
+	})
+}
+
+// New 创建 BadgerEngine 实例（不自动 Open）。
+//
+// 推荐使用 storage.CreateEngine(opts) 来创建并打开引擎，
+// New() 保留用于需要手动控制 Open 时序的场景。
 func New() *BadgerEngine {
 	return &BadgerEngine{}
 }
@@ -27,11 +41,23 @@ func New() *BadgerEngine {
 func (e *BadgerEngine) Open(opts storage.Options) error {
 	e.opts = opts
 
+	// 从 BackendOpts 提取 Badger 专属配置
+	valueLogFileSize, _ := storage.GetOpt[int64](opts, "value_log_file_size")
+	memTableSize, _ := storage.GetOpt[int64](opts, "mem_table_size")
+	numMemTables, _ := storage.GetOpt[int](opts, "num_mem_tables")
+
+	// 未指定时使用 BadgerDB 自身默认值
 	badgerOpts := badger.DefaultOptions(opts.DataDir).
-		WithSyncWrites(opts.SyncWrites).
-		WithValueLogFileSize(opts.ValueLogFileSize).
-		WithMemTableSize(opts.MemTableSize).
-		WithNumMemtables(opts.NumMemTables)
+		WithSyncWrites(opts.SyncWrites)
+	if valueLogFileSize > 0 {
+		badgerOpts = badgerOpts.WithValueLogFileSize(valueLogFileSize)
+	}
+	if memTableSize > 0 {
+		badgerOpts = badgerOpts.WithMemTableSize(memTableSize)
+	}
+	if numMemTables > 0 {
+		badgerOpts = badgerOpts.WithNumMemtables(numMemTables)
+	}
 
 	// 禁用 BadgerDB 的内置日志（我们自己管理日志）
 	badgerOpts = badgerOpts.WithLogger(nil)

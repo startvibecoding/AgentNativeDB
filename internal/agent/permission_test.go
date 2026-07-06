@@ -2,27 +2,15 @@ package agent
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
-	badgerstore "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
+	_ "github.com/startvibecoding/AgentNativeDB/internal/storage/badger"
 )
 
 func newPermTestEnv(t *testing.T) (*PermissionManager, *AuditLogger, storage.Engine) {
 	t.Helper()
-	dir := t.TempDir()
-	engine := badgerstore.New()
-	opts := storage.DefaultOptions()
-	opts.DataDir = dir
-	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
-		t.Fatalf("open engine: %v", err)
-	}
-	t.Cleanup(func() {
-		engine.Close()
-		os.RemoveAll(dir)
-	})
+	engine := storage.NewTestEngine(t)
 
 	audit := NewAuditLogger(engine)
 	pm, err := NewPermissionManager(engine, audit)
@@ -170,11 +158,11 @@ func TestPermission_CustomRoleAndScope(t *testing.T) {
 
 func TestPermission_Persistence(t *testing.T) {
 	dir := t.TempDir()
-	engine := badgerstore.New()
 	opts := storage.DefaultOptions()
 	opts.DataDir = dir
 	opts.SyncWrites = false
-	if err := engine.Open(opts); err != nil {
+	engine, err := storage.CreateEngine(opts)
+	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -196,13 +184,11 @@ func TestPermission_Persistence(t *testing.T) {
 	engine.Close()
 
 	// 重开，验证持久化
-	engine2 := badgerstore.New()
-	if err := engine2.Open(opts); err != nil {
+	engine2, err := storage.CreateEngine(opts)
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer engine2.Close()
-	defer os.RemoveAll(dir)
-
 	pm2, err := NewPermissionManager(engine2, nil)
 	if err != nil {
 		t.Fatal(err)
