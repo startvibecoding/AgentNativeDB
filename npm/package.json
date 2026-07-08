@@ -1,0 +1,45 @@
+{
+  "name": "andb-installer",
+  "version": "0.1.0",
+  "description": "AgentNativeDB — Agent-native database with SQL, vector search, graph store, and MCP server",
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": [
+    "bin/andb",
+    "scripts/",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "database",
+    "sql",
+    "vector-search",
+    "graph",
+    "mcp",
+    "hnsw",
+    "knowledge-graph",
+    "cli"
+  ],
+  "author": "AgentNativeDB",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/startvibecoding/AgentNativeDB.git",
+    "directory": "npm"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "optionalDependencies": {
+    "andb-installer-darwin-arm64": "0.1.0",
+    "andb-installer-darwin-x64": "0.1.0",
+    "andb-installer-linux-arm64": "0.1.0",
+    "andb-installer-linux-x64": "0.1.0",
+    "andb-installer-win32-x64": "0.1.0"
+  },
+  "bin": {
+    "andb": "bin/andb"
+  }
+}

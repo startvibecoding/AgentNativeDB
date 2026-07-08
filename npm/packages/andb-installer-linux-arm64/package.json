@@ -1,0 +1,15 @@
+{
+  "name": "andb-installer-linux-arm64",
+  "version": "0.1.0",
+  "description": "AgentNativeDB native binary for linux-arm64",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["glibc"],
+  "files": ["bin/"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/startvibecoding/AgentNativeDB.git",
+    "directory": "npm"
+  }
+}

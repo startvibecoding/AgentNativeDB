@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "andb-installer"
+version = "0.1.0"
+description = "AgentNativeDB — Agent-native database with SQL, vector search, graph store, and MCP server"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [{ name = "AgentNativeDB" }]
+keywords = ["ai", "agent", "database", "sql", "vector-search", "graph", "mcp", "hnsw"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development",
+  "Topic :: Database",
+]
+
+[project.urls]
+Homepage = "https://github.com/startvibecoding/AgentNativeDB"
+Repository = "https://github.com/startvibecoding/AgentNativeDB"
+Documentation = "https://github.com/startvibecoding/AgentNativeDB/tree/main/docs"
+
+[project.scripts]
+andb = "andb_installer.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+andb_installer = ["bin/andb", "bin/andb.exe"]
