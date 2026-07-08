@@ -714,7 +714,7 @@
             <thead>
               <tr>
                 {#each getInsertColumns() as col}
-                  <th>{col}</th>
+                  <th>{col} <span class="col-type">({getColumnType(col) || 'TEXT'})</span></th>
                 {/each}
                 <th style="width: 140px;">{i18n.t('tables.operation')}</th>
               </tr>
@@ -1101,5 +1101,12 @@
     align-items: center;
     gap: 12px;
     margin-top: 12px;
+  }
+  .col-type {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: normal;
+    opacity: 0.7;
+    font-family: var(--font-mono);
   }
 </style>

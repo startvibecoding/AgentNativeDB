@@ -2,6 +2,7 @@ package sql
 
 import (
 	"fmt"
+	"strings"
 )
 
 // PlanNode 查询计划节点接口
@@ -76,6 +77,29 @@ type SortNode struct {
 
 func (n *SortNode) planNode() {}
 func (n *SortNode) String() string { return "Sort" }
+
+// ReverseNode 反转行顺序（用于 DESC 优化，避免内存排序）
+type ReverseNode struct {
+	Input PlanNode
+}
+
+func (n *ReverseNode) planNode()      {}
+func (n *ReverseNode) String() string { return "Reverse" }
+
+// IndexOrderedScanNode 利用 BTree 索引有序扫描，跳过内存排序
+// 适用场景：ORDER BY col ASC/DESC，且 col 上有 BTree 索引
+// ASC  → 正向扫描索引（天然有序）
+// DESC → 正向扫描 + 反转结果
+type IndexOrderedScanNode struct {
+	Table     string
+	Alias     string
+	IndexName string
+	Column    string
+	Ascending bool // true=ASC 正序，false=DESC 倒序
+}
+
+func (n *IndexOrderedScanNode) planNode()      {}
+func (n *IndexOrderedScanNode) String() string { return fmt.Sprintf("IndexOrderedScan(%s.%s)", n.Table, n.Column) }
 
 // LimitNode 分页
 type LimitNode struct {
@@ -220,8 +244,41 @@ func (p *Planner) planSelect(s *SelectStmt) (PlanNode, error) {
 		}
 	}
 
-	// 5. 排序
-	if s.OrderBy != nil {
+	// 5. 排序 —— 尝试用 BTree 索引避免内存排序
+	orderByConsumed := false
+	if s.OrderBy != nil && len(s.OrderBy) == 1 {
+		if col := extractOrderByColumn(s.OrderBy[0].Expr); col != "" {
+			asc := s.OrderBy[0].Ascending
+
+			// 5a. 检查 IndexScanNode（来自 WHERE）是否与 ORDER BY 同列
+			//     IndexScanNode 可能被包在 FilterNode / ProjectNode 里
+			if is := unwrapIndexScan(node); is != nil {
+				if strings.EqualFold(is.Column, col) && (is.Op == IndexOpRange || is.Op == IndexOpEqual) {
+					// 索引扫描已按索引有序返回，跳过 SortNode
+					if !asc {
+						injectReverse(node, is)
+					}
+					orderByConsumed = true
+				}
+			}
+
+			// 5b. 无 WHERE 时，直接用 BTree 索引有序扫描
+			//     条件：当前节点链中不能有 FilterNode/IndexScanNode（说明有 WHERE 谓词）
+			if !orderByConsumed && !hasFilterOrIndexScan(node) {
+				if idx := p.pickIndex(s.From.Name, col, "RANGE"); idx != nil && idx.Type == "BTREE" {
+					node = &IndexOrderedScanNode{
+						Table:     s.From.Name,
+						Alias:     s.From.Alias,
+						IndexName: idx.Name,
+						Column:    col,
+						Ascending: asc,
+					}
+					orderByConsumed = true
+				}
+			}
+		}
+	}
+	if s.OrderBy != nil && !orderByConsumed {
 		node = &SortNode{
 			Input: node,
 			Order: s.OrderBy,
@@ -634,4 +691,56 @@ func flipCompareOp(op TokenType) TokenType {
 func isIndexNode(n PlanNode) bool {
 	_, ok := n.(*IndexScanNode)
 	return ok
+}
+
+// hasFilterOrIndexScan 检查节点链中是否包含 FilterNode 或 IndexScanNode（说明有 WHERE 谓词）
+func hasFilterOrIndexScan(n PlanNode) bool {
+	switch v := n.(type) {
+	case *FilterNode, *IndexScanNode:
+		return true
+	case *ProjectNode:
+		return hasFilterOrIndexScan(v.Input)
+	}
+	return false
+}
+
+// extractOrderByColumn 从 ORDER BY 表达式中提取列名（仅简单标识符）
+func extractOrderByColumn(expr Expression) string {
+	if id, ok := expr.(*IdentifierExpr); ok {
+		return id.Name
+	}
+	return ""
+}
+
+// unwrapIndexScan 从 ProjectNode / FilterNode 中递归提取 IndexScanNode
+func unwrapIndexScan(n PlanNode) *IndexScanNode {
+	switch v := n.(type) {
+	case *IndexScanNode:
+		return v
+	case *ProjectNode:
+		return unwrapIndexScan(v.Input)
+	case *FilterNode:
+		return unwrapIndexScan(v.Input)
+	}
+	return nil
+}
+
+// injectReverse 在 target 前插入 ReverseNode。
+// 包装节点类型与 unwrapIndexScan 保持一致。
+func injectReverse(parent PlanNode, target *IndexScanNode) bool {
+	switch v := parent.(type) {
+	case *ProjectNode:
+		if v.Input == target {
+			v.Input = &ReverseNode{Input: target}
+			return true
+		}
+		return injectReverse(v.Input, target)
+	case *FilterNode:
+		if v.Input == target {
+			v.Input = &ReverseNode{Input: target}
+			return true
+		}
+		return injectReverse(v.Input, target)
+	}
+	return false
 }

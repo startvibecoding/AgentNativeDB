@@ -45,6 +45,10 @@ vet:
 clean:
 	rm -rf bin/ data/
 
+# Mock 数据生成 (需要先启动服务器)
+mock:
+	go run ./cmd/mock
+
 # Tidy 依赖
 tidy:
 	go mod tidy

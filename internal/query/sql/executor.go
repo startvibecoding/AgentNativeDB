@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -97,6 +98,10 @@ func (e *Executor) Execute(ctx context.Context, plan PlanNode) (*Result, error) 
 		return e.executeProject(ctx, n)
 	case *SortNode:
 		return e.executeSort(ctx, n)
+	case *ReverseNode:
+		return e.executeReverse(ctx, n)
+	case *IndexOrderedScanNode:
+		return e.executeIndexOrderedScan(ctx, n)
 	case *LimitNode:
 		return e.executeLimit(ctx, n)
 	case *AggregateNode:
@@ -263,6 +268,87 @@ func (e *Executor) executeSort(ctx context.Context, node *SortNode) (*Result, er
 	})
 
 	return result, nil
+}
+
+// ========== 反转行顺序 ==========
+
+func (e *Executor) executeReverse(ctx context.Context, node *ReverseNode) (*Result, error) {
+	result, err := e.Execute(ctx, node.Input)
+	if err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(result.Rows)-1; i < j; i, j = i+1, j-1 {
+		result.Rows[i], result.Rows[j] = result.Rows[j], result.Rows[i]
+	}
+	return result, nil
+}
+
+// ========== 索引有序扫描（跳过排序）==========
+
+func (e *Executor) executeIndexOrderedScan(ctx context.Context, node *IndexOrderedScanNode) (*Result, error) {
+	meta, ok := e.indexes.Get(node.IndexName)
+	if !ok {
+		// 索引不存在，回退到全表扫描
+		return e.executeScan(ctx, &ScanNode{Table: node.Table, Alias: node.Alias})
+	}
+
+	// 用 LookupRange(nil, nil) 全范围扫描 BTree 索引，结果天然有序
+	rowIDs, err := e.indexes.LookupRange(ctx, meta, nil, nil, true, true)
+	if err != nil {
+		return nil, fmt.Errorf("索引扫描失败: %w", err)
+	}
+
+	// DESC：反转 rowIDs（BTree 天然 ASC）
+	if !node.Ascending {
+		for i, j := 0, len(rowIDs)-1; i < j; i, j = i+1, j-1 {
+			rowIDs[i], rowIDs[j] = rowIDs[j], rowIDs[i]
+		}
+	}
+
+	prefix := e.tablePrefix(node.Table)
+	if prefix == 0 {
+		return nil, fmt.Errorf("未知表: %s", node.Table)
+	}
+
+	seen := make(map[string]struct{}, len(rowIDs))
+	var rows []Row
+	for _, id := range rowIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+
+		key := storage.EncodeKey(prefix, id)
+		val, err := e.engine.Get(ctx, key)
+		if err != nil {
+			continue
+		}
+		var values map[string]any
+		if err := json.Unmarshal(val, &values); err != nil {
+			continue
+		}
+
+		if node.Alias != "" {
+			aliased := make(map[string]any, len(values))
+			for k, v := range values {
+				aliased[node.Alias+"."+k] = v
+				aliased[k] = v
+			}
+			values = aliased
+		}
+		rows = append(rows, Row{Values: values})
+	}
+
+	// 收集列名
+	var columns []string
+	if len(rows) > 0 {
+		for k := range rows[0].Values {
+			columns = append(columns, k)
+		}
+		sort.Strings(columns)
+	}
+
+	return &Result{Columns: columns, Rows: rows}, nil
 }
 
 // ========== 分页 ==========
@@ -1241,6 +1327,16 @@ func (e *Executor) executeCreateTable(ctx context.Context, node *CreateTablePlan
 func (e *Executor) executeDropTable(ctx context.Context, node *DropTablePlan) (*Result, error) {
 	stmt := node.Stmt
 
+	// 先清理该表上的所有索引
+	if e.indexes != nil {
+		idxMetas := e.indexes.ListByTable(stmt.Table)
+		for _, idxMeta := range idxMetas {
+			if err := e.indexes.Drop(ctx, idxMeta.Name, true); err != nil {
+				slog.Warn("删除表时清理索引失败", "index", idxMeta.Name, "error", err)
+			}
+		}
+	}
+
 	if err := e.tables.DropTable(ctx, stmt.Table, stmt.IfExists); err != nil {
 		return nil, err
 	}
@@ -1268,8 +1364,51 @@ func (e *Executor) executeAlterTable(ctx context.Context, node *AlterTablePlan) 
 			action.(*storage.AddColumnAction).Column.Default = evalLiteral(a.Column.Default)
 		}
 	case *DropColumnAction:
+		// 检查列上是否有索引
+		if e.indexes != nil {
+			idxMetas := e.indexes.FindByColumn(stmt.Table, a.Column)
+			if len(idxMetas) > 0 {
+				names := make([]string, len(idxMetas))
+				for i, m := range idxMetas {
+					names[i] = m.Name
+				}
+				return nil, fmt.Errorf("列 %s 上存在索引 %v，请先删除索引再删除列", a.Column, names)
+			}
+		}
 		action = &storage.DropColumnAction{Column: a.Column}
 	case *ModifyColumnAction:
+		// 检查类型变更是否影响已有索引
+		if e.indexes != nil {
+			idxMetas := e.indexes.FindByColumn(stmt.Table, a.Column.Name)
+			if len(idxMetas) > 0 {
+				// 查找当前列类型
+				var currentType string
+				if meta, ok := e.tables.GetTable(stmt.Table); ok {
+					for _, col := range meta.Columns {
+						if col.Name == a.Column.Name {
+							currentType = col.Type
+							break
+						}
+					}
+				}
+				// 类型变更时，索引编码可能不兼容
+				if currentType != "" && !strings.EqualFold(currentType, a.Column.Type.Name) {
+					names := make([]string, len(idxMetas))
+					for i, m := range idxMetas {
+						names[i] = m.Name
+					}
+					return nil, fmt.Errorf("列 %s 上存在索引 %v，不能变更类型（%s → %s），请先删除索引", a.Column.Name, names, currentType, a.Column.Type.Name)
+				}
+				// 无法确定当前类型时，有索引则保守拒绝
+				if currentType == "" {
+					names := make([]string, len(idxMetas))
+					for i, m := range idxMetas {
+						names[i] = m.Name
+					}
+					return nil, fmt.Errorf("列 %s 上存在索引 %v，无法确认类型兼容性，请先删除索引", a.Column.Name, names)
+				}
+			}
+		}
 		action = &storage.ModifyColumnAction{
 			Column: storage.ColumnMeta{
 				Name:       a.Column.Name,

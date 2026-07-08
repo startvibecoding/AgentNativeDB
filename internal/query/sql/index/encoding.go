@@ -84,10 +84,15 @@ func encodeString(s string) []byte {
 	buf := make([]byte, 0, len(s)+2)
 	buf = append(buf, tagString)
 	for i := 0; i < len(s); i++ {
-		if s[i] == 0x00 {
+		b := s[i]
+		// A-Z -> a-z: index sorting is case-insensitive
+		if b >= 0x41 && b <= 0x5A {
+			b += 0x20
+		}
+		if b == 0x00 {
 			buf = append(buf, 0x00, 0xFF)
 		} else {
-			buf = append(buf, s[i])
+			buf = append(buf, b)
 		}
 	}
 	return buf
