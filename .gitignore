@@ -28,6 +28,16 @@ coverage.html
 *.swp
 *.swo
 
+# PyPI 构建产物
+pypi/build/
+pypi/dist/
+pypi/*.egg-info/
+pypi/.venv-build/
+
+# npm 构建产物
+npm/*.tgz
+npm/packages/*/node_modules/
+
 # OS
 .DS_Store
 Thumbs.db

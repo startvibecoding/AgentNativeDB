@@ -9,7 +9,7 @@
 
 # Variables
 BINARY_NAME=andb
-VERSION=$(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+VERSION=$(shell git tag --sort=-v:refname | head -1 2>/dev/null || echo "dev")
 PRE_VERSION=$(if $(filter %-pre,$(VERSION)),$(VERSION),$(VERSION)-pre)
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
 GOBUILD_FLAGS=-trimpath
@@ -353,6 +353,7 @@ pypi-version: $(PYPI_VENV)/bin/python
 	print(f'  pyproject.toml -> $(VERSION)')\
 	"
 	@$(PYTHON) -c "\
+	import re; \
 	content = open('pypi/src/andb_installer/__init__.py').read(); \
 (content, count) = re.subn(r'__version__ = \"[^\"]+\"', '__version__ = \"$(VERSION)\"', content, count=1); \
 	open('pypi/src/andb_installer/__init__.py', 'w').write(content); \
@@ -361,6 +362,7 @@ pypi-version: $(PYPI_VENV)/bin/python
 
 pypi-packages: build-all $(PYPI_VENV)/bin/python
 	@echo "Building PyPI platform wheels..."
+	@rm -rf pypi/dist pypi/build pypi/*.egg-info pypi/src/andb_installer.egg-info
 	@mkdir -p pypi/src/andb_installer/bin
 	cp bin/$(BINARY_NAME)-linux-amd64 pypi/src/andb_installer/bin/andb-linux-amd64
 	cp bin/$(BINARY_NAME)-linux-arm64 pypi/src/andb_installer/bin/andb-linux-arm64

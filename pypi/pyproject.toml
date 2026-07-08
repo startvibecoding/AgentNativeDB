@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "andb-installer"
-version = "0.1.0"
+version = "v0.1.1"
 description = "AgentNativeDB — Agent-native database with SQL, vector search, graph store, and MCP server"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -39,4 +39,4 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-andb_installer = ["bin/andb", "bin/andb.exe"]
+andb_installer = ["bin/*"]
