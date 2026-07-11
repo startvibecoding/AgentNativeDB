@@ -136,3 +136,17 @@ export async function deleteVector(name, id) {
 export async function searchVector(name, vector, topK) {
   return request('POST', `/vector/indexes/${encodeURIComponent(name)}/search`, { vector, top_k: topK });
 }
+
+// ========== Cluster ==========
+
+export async function getClusterStatus() {
+  return request('GET', '/cluster/status');
+}
+
+export async function addPeer(nodeId, raftAddr) {
+  return request('POST', '/cluster/peers', { node_id: nodeId, raft_addr: raftAddr });
+}
+
+export async function removePeer(nodeId) {
+  return request('DELETE', `/cluster/peers/${encodeURIComponent(nodeId)}`);
+}

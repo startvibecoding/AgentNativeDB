@@ -29,5 +29,16 @@
   "log": {
     "level": "info",
     "format": "text"
+  },
+  "cluster": {
+    "enabled": false,
+    "node_id": "node1",
+    "raft_addr": "0.0.0.0:8400",
+    "peers": {
+      "node1": "node1.example.com:8400",
+      "node2": "node2.example.com:8400",
+      "node3": "node3.example.com:8400"
+    },
+    "bootstrap": false
   }
 }

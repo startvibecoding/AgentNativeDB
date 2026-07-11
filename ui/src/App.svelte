@@ -4,6 +4,7 @@
   import { healthCheck } from './lib/api.js';
   import Sidebar from './components/Sidebar.svelte';
   import Dashboard from './pages/Dashboard.svelte';
+  import Cluster from './pages/Cluster.svelte';
   import Tables from './pages/Tables.svelte';
   import SQLQuery from './pages/SQLQuery.svelte';
   import Sessions from './pages/Sessions.svelte';
@@ -14,12 +15,14 @@
 
   let page = $state('dashboard');
   let ok = $state(false);
+  let clusterInfo = $state(null);
 
   currentPage.subscribe(v => page = v);
 
   const pageTitle = $derived(() => {
     const map = {
       dashboard: i18n.t('nav.dashboard'),
+      cluster: i18n.t('nav.cluster'),
       tables: i18n.t('nav.tables'),
       sql: i18n.t('nav.sql'),
       sessions: i18n.t('nav.sessions'),
@@ -39,12 +42,14 @@
 
   async function checkHealth() {
     try {
-      await healthCheck();
+      const h = await healthCheck();
       ok = true;
       connected.set(true);
+      clusterInfo = h.data?.cluster || null;
     } catch {
       ok = false;
       connected.set(false);
+      clusterInfo = null;
     }
   }
 </script>
@@ -55,6 +60,12 @@
     <header class="top-bar">
       <div class="top-bar-left">
         <h1 class="page-title">{pageTitle()}</h1>
+        {#if clusterInfo && clusterInfo.enabled}
+          <span class="cluster-badge" class:leader={clusterInfo.state === 'leader'}>
+            <span class="cluster-dot"></span>
+            {clusterInfo.state === 'leader' ? i18n.t('cluster.leader') : i18n.t('cluster.follower')}
+          </span>
+        {/if}
       </div>
       <div class="top-bar-right">
         <button class="lang-toggle" onclick={() => i18n.toggle()}>
@@ -68,7 +79,9 @@
     </header>
     <div class="page-content">
       {#if page === 'dashboard'}
-        <Dashboard />
+        <Dashboard {clusterInfo}/>
+      {:else if page === 'cluster'}
+        <Cluster />
       {:else if page === 'tables'}
         <Tables />
       {:else if page === 'sql'}
@@ -129,6 +142,27 @@
     font-weight: 600;
     letter-spacing: -0.02em;
     color: var(--text-primary);
+  }
+  .cluster-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(0, 122, 255, 0.1);
+    color: var(--blue);
+  }
+  .cluster-badge.leader {
+    background: rgba(52, 199, 89, 0.1);
+    color: var(--green);
+  }
+  .cluster-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
   }
   .lang-toggle {
     padding: 4px 10px;

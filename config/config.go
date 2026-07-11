@@ -15,6 +15,7 @@ type Config struct {
 	Agent   AgentConfig   `json:"agent"`
 	Vector  VectorConfig  `json:"vector"`
 	Log     LogConfig     `json:"log"`
+	Cluster ClusterConfig `json:"cluster,omitempty"`
 }
 
 // ServerConfig 服务器配置
@@ -85,6 +86,20 @@ type VectorConfig struct {
 type LogConfig struct {
 	Level  string `json:"level"`
 	Format string `json:"format"` // "text" or "json"
+}
+
+// ClusterConfig Raft 集群配置
+type ClusterConfig struct {
+	// Enabled 是否启用集群模式
+	Enabled bool `json:"enabled"`
+	// NodeID 当前节点ID（必填）
+	NodeID string `json:"node_id"`
+	// RaftAddr Raft内部通信地址（host:port），默认与HTTP服务同地址
+	RaftAddr string `json:"raft_addr"`
+	// Peers 集群节点列表，map[nodeID] = "host:port"
+	Peers map[string]string `json:"peers,omitempty"`
+	// Bootstrap 是否初始化新集群（仅首次在单个节点启动时设为true）
+	Bootstrap bool `json:"bootstrap"`
 }
 
 // Load 从 JSON 文件加载配置

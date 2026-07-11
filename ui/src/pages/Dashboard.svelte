@@ -1,7 +1,10 @@
 <script>
   import { onMount } from 'svelte';
   import { executeQuery, healthCheck } from '../lib/api.js';
-  import { i18n } from '../lib/stores.js';
+  import { i18n, currentPage } from '../lib/stores.js';
+
+  /** @type {{enabled?: boolean, node_id?: string, state?: string, leader_id?: string, term?: number}} */
+  let { clusterInfo = null } = $props();
 
   let stats = $state({ tables: 0, sessions: 0, memories: 0, decisions: 0 });
   let serverInfo = $state({ status: 'unknown', time: '' });
@@ -53,6 +56,28 @@
 {/if}
 
 <div class="stat-grid">
+  {#if clusterInfo && clusterInfo.enabled}
+  <div class="stat-card clickable" onclick={() => currentPage.set('cluster')}>
+    <div class="stat-icon" style="background: {(clusterInfo.state === 'leader' ? 'var(--green-light)' : 'var(--blue-light)')}; color: {(clusterInfo.state === 'leader' ? 'var(--green)' : 'var(--blue)')};">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="2" x2="12" y2="4"/>
+        <line x1="12" y1="20" x2="12" y2="22"/>
+        <line x1="2" y1="12" x2="4" y2="12"/>
+        <line x1="20" y1="12" x2="22" y2="12"/>
+      </svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-value">
+        <span class="cluster-state" class:leader={clusterInfo.state === 'leader'}>
+          {clusterInfo.state === 'leader' ? i18n.t('cluster.leader') : i18n.t('cluster.follower')}
+        </span>
+      </div>
+      <div class="stat-label">{i18n.t('cluster.clusterStatus')}</div>
+    </div>
+  </div>
+  {/if}
   <div class="stat-card">
     <div class="stat-icon" style="background: var(--blue-light); color: var(--blue);">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -138,25 +163,25 @@
 <div class="card mt-4">
   <h3 class="card-title">{i18n.t('dashboard.quickActions')}</h3>
   <div class="quick-actions">
-    <button class="action-card" onclick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'sql' }))}>
+    <button class="action-card" onclick={() => currentPage.set('sql')}>
       <div class="action-icon" style="background: var(--blue-light); color: var(--blue);">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
       </div>
       <span class="action-label">{i18n.t('dashboard.action.sql')}</span>
     </button>
-    <button class="action-card" onclick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'tables' }))}>
+    <button class="action-card" onclick={() => currentPage.set('tables')}>
       <div class="action-icon" style="background: var(--teal-light); color: var(--teal);">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
       </div>
       <span class="action-label">{i18n.t('dashboard.action.tables')}</span>
     </button>
-    <button class="action-card" onclick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'sessions' }))}>
+    <button class="action-card" onclick={() => currentPage.set('sessions')}>
       <div class="action-icon" style="background: var(--green-light); color: var(--green);">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       </div>
       <span class="action-label">{i18n.t('dashboard.action.sessions')}</span>
     </button>
-    <button class="action-card" onclick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'memories' }))}>
+    <button class="action-card" onclick={() => currentPage.set('memories')}>
       <div class="action-icon" style="background: var(--purple-light); color: var(--purple);">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
       </div>
@@ -168,7 +193,7 @@
 <style>
   .stat-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 16px;
     margin-bottom: 20px;
   }
@@ -182,7 +207,10 @@
     box-shadow: var(--shadow-sm);
     transition: box-shadow 0.2s;
   }
-  .stat-card:hover {
+  .stat-card.clickable {
+    cursor: pointer;
+  }
+  .stat-card.clickable:hover {
     box-shadow: var(--shadow-md);
   }
   .stat-icon {
@@ -205,6 +233,17 @@
     color: var(--text-tertiary);
     font-weight: 500;
     margin-top: 2px;
+  }
+  .cluster-state {
+    font-size: 18px;
+    padding: 3px 10px;
+    border-radius: 8px;
+    background: rgba(0, 122, 255, 0.1);
+    color: var(--blue);
+  }
+  .cluster-state.leader {
+    background: rgba(52, 199, 89, 0.1);
+    color: var(--green);
   }
   .table-list {
     display: flex;

@@ -9,6 +9,7 @@
 
   const navItems = $derived([
     { id: 'dashboard', label: i18n.t('nav.dashboard'), icon: '◆' },
+    { id: 'cluster', label: i18n.t('nav.cluster'), icon: '◉' },
     { id: 'tables', label: i18n.t('nav.tables'), icon: '☰' },
     { id: 'sql', label: i18n.t('nav.sql'), icon: '▸' },
     { id: 'vectors', label: i18n.t('nav.vectors'), icon: '↯' },

@@ -12,6 +12,7 @@ import (
 
 	"github.com/startvibecoding/AgentNativeDB/api/mcp"
 	"github.com/startvibecoding/AgentNativeDB/internal/agent"
+	raftengine "github.com/startvibecoding/AgentNativeDB/internal/raft"
 	"github.com/startvibecoding/AgentNativeDB/internal/model"
 	"github.com/startvibecoding/AgentNativeDB/internal/query/sql"
 	"github.com/startvibecoding/AgentNativeDB/internal/storage"
@@ -94,8 +95,18 @@ func (r *Router) registerRoutes() {
 	// Health
 	r.mux.HandleFunc("GET /health", r.handleHealth)
 
+	// 集群管理 API
+	r.mux.HandleFunc("GET /api/v1/cluster/status", r.handleClusterStatus)
+	r.mux.HandleFunc("POST /api/v1/cluster/peers", r.handleAddPeer)
+	r.mux.HandleFunc("DELETE /api/v1/cluster/peers/{id}", r.handleRemovePeer)
+
 	// MCP over HTTP (JSON-RPC 单次请求/响应)
 	r.mux.Handle("POST /mcp", r.mcp)
+
+	// Raft 内部通信（挂载到同端口）
+	if raftEng, ok := r.engine.(*raftengine.RaftEngine); ok {
+		r.mux.Handle("/raft/", raftEng.Node().HTTPHandler())
+	}
 
 	// 静态文件服务 (Web UI)
 	r.mux.HandleFunc("/", r.handleStatic)
@@ -107,6 +118,7 @@ type apiResponse struct {
 	OK     bool   `json:"ok"`
 	Data   any    `json:"data,omitempty"`
 	Error  string `json:"error,omitempty"`
+	Leader string `json:"leader,omitempty"` // 如果不是Leader，返回Leader地址
 }
 
 func jsonOK(w http.ResponseWriter, data any) {
@@ -118,6 +130,26 @@ func jsonError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(apiResponse{OK: false, Error: msg})
+}
+
+// jsonNotLeader 返回非Leader错误，包含Leader地址（如果知道）
+func jsonNotLeader(w http.ResponseWriter, r engineIface) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	leaderAddr := ""
+	if r != nil {
+		node := r.Node()
+		leaderAddr = node.LeaderAddr()
+	}
+	json.NewEncoder(w).Encode(apiResponse{
+		OK:     false,
+		Error:  "not leader, please forward writes to leader",
+		Leader: leaderAddr,
+	})
+}
+
+type engineIface interface {
+	Node() *raftengine.Node
 }
 
 func parseLimit(r *http.Request) int {
@@ -132,10 +164,86 @@ func parseLimit(r *http.Request) int {
 // ========== Health ==========
 
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
-	jsonOK(w, map[string]any{
+	status := map[string]any{
 		"status": "ok",
 		"time":   time.Now(),
-	})
+	}
+	// 添加集群状态
+	if raftEng, ok := r.engine.(raftEngineIface); ok {
+		node := raftEng.Node()
+		status["cluster"] = map[string]any{
+			"enabled":   true,
+			"node_id":   node.Status().NodeID,
+			"state":     node.Status().State,
+			"leader_id": node.LeaderID(),
+			"term":      node.Term(),
+		}
+	}
+	jsonOK(w, status)
+}
+
+type raftEngineIface interface {
+	Node() *raftengine.Node
+}
+
+// ========== 集群管理 Handlers ==========
+
+func (r *Router) handleClusterStatus(w http.ResponseWriter, req *http.Request) {
+	raftEng, ok := r.engine.(raftEngineIface)
+	if !ok {
+		jsonOK(w, map[string]any{"enabled": false})
+		return
+	}
+	jsonOK(w, raftEng.Node().Status())
+}
+
+func (r *Router) handleAddPeer(w http.ResponseWriter, req *http.Request) {
+	raftEng, ok := r.engine.(raftEngineIface)
+	if !ok {
+		jsonError(w, 400, "cluster mode not enabled")
+		return
+	}
+	node := raftEng.Node()
+	if !node.IsLeader() {
+		jsonError(w, 503, fmt.Sprintf("not leader, current leader is %s", node.LeaderID()))
+		return
+	}
+	var body struct {
+		NodeID   string `json:"node_id"`
+		RaftAddr string `json:"raft_addr"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		jsonError(w, 400, fmt.Sprintf("invalid request: %v", err))
+		return
+	}
+	if body.NodeID == "" || body.RaftAddr == "" {
+		jsonError(w, 400, "node_id and raft_addr are required")
+		return
+	}
+	if err := node.AddPeer(body.NodeID, body.RaftAddr); err != nil {
+		jsonError(w, 500, fmt.Sprintf("add peer: %v", err))
+		return
+	}
+	jsonOK(w, node.Status())
+}
+
+func (r *Router) handleRemovePeer(w http.ResponseWriter, req *http.Request) {
+	raftEng, ok := r.engine.(raftEngineIface)
+	if !ok {
+		jsonError(w, 400, "cluster mode not enabled")
+		return
+	}
+	node := raftEng.Node()
+	if !node.IsLeader() {
+		jsonError(w, 503, fmt.Sprintf("not leader, current leader is %s", node.LeaderID()))
+		return
+	}
+	id := req.PathValue("id")
+	if err := node.RemovePeer(id); err != nil {
+		jsonError(w, 500, fmt.Sprintf("remove peer: %v", err))
+		return
+	}
+	jsonOK(w, node.Status())
 }
 
 // ========== Session Handlers ==========
